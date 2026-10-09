@@ -1,11 +1,14 @@
 # Coolify: Build Pack "Docker Compose", Docker Compose Location "/docker-compose.yaml". Setup: docs/coolify.md
-# No "ports:" on purpose – Coolify's proxy routes the domain to the container; published host ports would bypass it.
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Direct access via http://<server-ip>:8787 (plain HTTP, bypasses Coolify's proxy).
+    # Remove this block once a domain with ":8787" is configured in Coolify.
+    ports:
+      - "8787:8787"
     environment:
       # Coolify generates a domain and routes it to container port 8787 (changeable under "Domains").
       - SERVICE_URL_APP_8787

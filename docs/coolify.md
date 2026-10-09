@@ -27,6 +27,8 @@ Music Scraper läuft in Coolify als **ein** Docker-Compose-Service. Das Repo bri
 
    Das `:8787` ist **Pflicht** – es sagt dem Coolify-Proxy, auf welchen Container-Port er weiterleiten soll. Öffentlich bleibt die Seite unter `https://musik.example.de` (Port 443) erreichbar. Ohne eigene Domain erzeugt Coolify automatisch eine (über `SERVICE_URL_APP_8787` in der Compose-Datei).
 
+   **Ohne Domain (Test über IP):** Die Compose-Datei veröffentlicht Port 8787 direkt auf dem Server, die App ist also auch unter `http://<server-ip>:8787` erreichbar. Dafür muss Port 8787 in der Firewall des Hosters offen sein. Das ist unverschlüsseltes HTTP, das Login-Passwort geht also im Klartext übers Netz. Sobald eine Domain eingerichtet ist, den `ports:`-Block aus `docker-compose.yaml` entfernen.
+
 4. **Umgebungsvariablen prüfen** (Tab *Environment Variables*):
    - `SERVICE_PASSWORD_APP` – von Coolify generiert, das ist das **Login-Passwort** fürs Dashboard
    - `BASIC_AUTH_USER` – Login-Name, Standard `radio`
