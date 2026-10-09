@@ -1,0 +1,27 @@
+# Coolify: Build Pack "Docker Compose", Docker Compose Location "/docker-compose.yaml". Setup: docs/coolify.md
+# No "ports:" on purpose – Coolify's proxy routes the domain to the container; published host ports would bypass it.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Coolify generates a domain and routes it to container port 8787 (changeable under "Domains").
+      - SERVICE_URL_APP_8787
+      # Basic Auth for dashboard + admin API. Coolify generates the password (Environment Variables → SERVICE_PASSWORD_APP).
+      # Auth is disabled when user or password is empty.
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-radio}
+      - BASIC_AUTH_PASSWORD=${SERVICE_PASSWORD_APP}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      - YRPA_VERIFY_ALL_TRACKS=${YRPA_VERIFY_ALL_TRACKS:-1}
+      - YRPA_TRACK_VERIFY=${YRPA_TRACK_VERIFY:-1}
+      - YRPA_DEDUP_COOLDOWN_SECONDS=${YRPA_DEDUP_COOLDOWN_SECONDS:-900}
+    volumes:
+      # SQLite database + generated reports. Without this volume every deploy starts with an empty database.
+      - music-scraper-data:/data
+
+volumes:
+  music-scraper-data:

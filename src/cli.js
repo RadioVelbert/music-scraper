@@ -24,13 +24,17 @@ import { openDb, dedupeStationToOnePlayPerMinute, dedupeStationByMinGapSeconds }
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
+// Explicit CLI flags win; the env vars let the Docker image (and `docker exec` sessions) use the volume paths without repeating them.
+const DEFAULT_DB_PATH = process.env.DB_PATH || 'music-scraper.sqlite';
+const DEFAULT_CONFIG_PATH = process.env.CONFIG_PATH || undefined;
+
 const program = new Command();
 program.name('music-scraper').description('Music Scraper').version('1.0.0');
 
 program
   .command('ingest')
-  .requiredOption('--config <path>', 'Path to config.yaml')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .action((opts) => {
     runIngest({ configPath: opts.config, dbPath: opts.db, logger }).catch((err) => {
       logger.error({ err: err.message }, 'ingest failed');
@@ -40,9 +44,9 @@ program
 
 program
   .command('report')
-  .requiredOption('--config <path>', 'Path to config.yaml')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
   .requiredOption('--week-start <YYYY-MM-DD>', 'Week start date in Europe/Berlin')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--csv', 'Write CSV exports')
   .option('--gzip', 'Also write .gz compressed artifacts')
   .option('--gzip-only', 'Keep only .gz artifacts (remove plain .md/.csv)')
@@ -65,10 +69,10 @@ program
 
 program
   .command('report-station')
-  .requiredOption('--config <path>', 'Path to config.yaml')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
   .requiredOption('--station-id <id>', 'Station id, e.g. dlf_nova')
   .requiredOption('--week-start <YYYY-MM-DD>', 'Week start date in Europe/Berlin')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--gzip', 'Also write .gz compressed artifact')
   .option('--gzip-only', 'Keep only .gz artifact (remove plain .md)')
   .action((opts) => {
@@ -90,8 +94,8 @@ program
 
 program
   .command('evaluate-daily')
-  .requiredOption('--config <path>', 'Path to config.yaml')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--date <YYYY-MM-DD>', 'Berlin date to evaluate (default: today in Europe/Berlin)')
   .action((opts) => {
     try {
@@ -104,8 +108,8 @@ program
 
 program
   .command('audit-coverage')
-  .requiredOption('--config <path>', 'Path to config.yaml')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--date <YYYY-MM-DD>', 'Berlin day to audit (default: yesterday in Europe/Berlin)')
   .action((opts) => {
     try {
@@ -118,7 +122,7 @@ program
 
 program
   .command('maintain-db')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--dry-run', 'Only report candidate merges, do not write changes')
   .option('--max-pairs <number>', 'Maximum swapped pairs to process in one run', '5000')
   .option('--min-score-gap <number>', 'Minimum score difference to merge a swapped pair', '0.35')
@@ -191,8 +195,8 @@ program
 
 program
   .command('daily-job')
-  .requiredOption('--config <path>', 'Path to config.yaml')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--make-report', 'Also generate weekly report for current week')
   .option('--audit-coverage', 'Also run coverage audit for yesterday (Europe/Berlin)')
   .action(async (opts) => {
@@ -234,7 +238,7 @@ program
 program
   .command('cleanup-station')
   .requiredOption('--station-id <id>', 'Station id, e.g. dlf_nova')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--min-gap-seconds <number>', 'Minimum seconds between two counted plays', '60')
   .option('--one-per-minute', 'Legacy mode: keep only one play per minute')
   .action((opts) => {
@@ -253,42 +257,20 @@ program
 
 program
   .command('api')
-  .requiredOption('--config <path>', 'Path to config.yaml')
-  .option('--db <path>', 'Path to SQLite database', 'yrpa.sqlite')
-  .option('--port <number>', 'API port', '8787')
+  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .option('--db <path>', 'Path to SQLite database', process.env.DB_PATH || 'yrpa.sqlite')
+  .option('--port <number>', 'API port', process.env.PORT || '8787')
   .option('--no-startup-report', 'Skip automatic ingest + evaluation + weekly report at API startup')
   .action(async (opts) => {
     try {
-      if (opts.startupReport) {
-        logger.info('running startup ingest/evaluation/report before API boot');
-        await runIngest({ configPath: opts.config, dbPath: opts.db, logger });
-        await runAllMaintenance({
-          dbPath: opts.db,
-          releaseMaxLookups: Number(process.env.YRPA_RELEASE_BACKFILL_STARTUP_LOOKUPS || 260),
-          logger
-        });
-        const berlinYesterday = DateTime.now().setZone(BERLIN_TZ).minus({ days: 1 }).toISODate();
-        runDailyEvaluation({
-          configPath: opts.config,
-          dbPath: opts.db,
-          date: berlinYesterday,
-          logger
-        });
-        runCoverageAudit({
-          configPath: opts.config,
-          dbPath: opts.db,
-          date: berlinYesterday,
-          logger
-        });
-        const weekStart = DateTime.now().setZone(BERLIN_TZ).startOf('week').toISODate();
-        runReport({ configPath: opts.config, dbPath: opts.db, weekStart, csv: true, logger });
-      }
-
+      // The startup ingest/evaluation/report runs in the background after the server is listening,
+      // so health checks (Docker/Coolify) pass while the initial scrape is still running.
       const { startApiServer } = await import('./api.js');
       await startApiServer({
         configPath: opts.config,
         dbPath: opts.db,
-        port: Number(opts.port)
+        port: Number(opts.port),
+        startupJob: Boolean(opts.startupReport)
       });
     } catch (err) {
       logger.error({ err: err.message }, 'api failed');
@@ -298,7 +280,7 @@ program
 
 program
   .command('backfill-deezer')
-  .option('--db <path>', 'Path to SQLite database', 'music-scraper.sqlite')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--dry-run', 'Print planned changes without writing anything (default: true for safety)')
   .option('--no-dry-run', 'Actually write changes to the database')
   .option('--limit <number>', 'Maximum number of tracks to process in this run')

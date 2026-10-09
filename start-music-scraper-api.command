@@ -54,14 +54,14 @@ format_log_line() {
   mdPath="$(extract_json_field "$line" "mdPath")"
 
   if [[ "$msg" == "API server started" ]]; then
-    ok "Startup abgeschlossen. API ist bereit."
+    ok "API ist bereit. Startup-Scan laeuft im Hintergrund."
     info "Dashboard: http://localhost:8787/dashboard"
     info "Backpool:  http://localhost:8787/backpool"
     return
   fi
 
-  if [[ "$msg" == "running startup ingest/evaluation/report before API boot" ]]; then
-    step "Startup-Scan laeuft (Ingest, Maintenance, Evaluation, Backpool)"
+  if [[ "$msg" == "job started" && "$(extract_json_field "$line" "job")" == "startup" ]]; then
+    step "Startup-Scan laeuft (Ingest, Maintenance, Evaluation, Report)"
     return
   fi
 

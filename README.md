@@ -114,6 +114,11 @@ Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 | `YRPA_TRACK_VERIFY` | Track-Verifikation aktivieren (`0` = aus) | `1` |
 | `YRPA_DEDUP_COOLDOWN_SECONDS` | Cooldown-Fenster für Dedup in Sekunden | `900` |
 | `LOG_LEVEL` | Pino Log-Level (`info`, `debug`, …) | `info` |
+| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Login für Dashboard und API (beide gesetzt = aktiv; `/api/health` bleibt offen) | — |
+| `DB_PATH` | Standard für `--db` | `music-scraper.sqlite` (`api`: `yrpa.sqlite`) |
+| `CONFIG_PATH` | Standard für `--config` | — |
+| `REPORTS_DIR` | Ausgabeordner für Reports | `reports` |
+| `PORT` | Standard für `--port` | `8787` |
 
 ### Starten
 
@@ -121,7 +126,7 @@ Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 node src/cli.js api --config config.yaml --db music-scraper.sqlite --port 8787
 ```
 
-Der Server startet auf Port `8787`. Beim ersten Start werden automatisch die Playlisten der konfigurierten Sender eingesammelt.
+Der Server startet auf Port `8787`. Direkt danach werden im Hintergrund die Playlisten der konfigurierten Sender eingesammelt.
 
 ### Seiten
 
@@ -133,7 +138,15 @@ Der Server startet auf Port `8787`. Beim ersten Start werden automatisch die Pla
 | Wochenberichte | `/weekly-reports` |
 | API Docs | `/api/docs` |
 
-> Der interne Cron läuft stündlich automatisch — kein externer Cronjob nötig.
+> Der interne Scheduler läuft automatisch (stündlich Ingest + Wartung + Auswertung, täglich 04:20 Coverage-Audit + Wochenreport) — kein externer Cronjob nötig.
+
+---
+
+## Deployment mit Coolify
+
+Das Repo ist für Coolify vorbereitet (`Dockerfile` + `docker-compose.yaml`): Build Pack **Docker Compose**, Domain mit Port angeben (`https://musik.example.de:8787`), deployen. Datenbank und Reports liegen in einem persistenten Volume, das Dashboard ist per Basic Auth geschützt.
+
+Schritt-für-Schritt-Anleitung, Datenübernahme und Backup: [docs/coolify.md](docs/coolify.md)
 
 ---
 
@@ -147,7 +160,7 @@ Alle Befehle laufen über `node src/cli.js <befehl> [optionen]`.
 node src/cli.js api --config config.yaml --db music-scraper.sqlite --port 8787
 ```
 
-Startet den Express-Server inklusive automatischem Startup-Ingest und Wartung.
+Startet den Express-Server. Ingest, Wartung und Auswertung laufen nach dem Start im Hintergrund.
 
 | Option | Beschreibung | Standard |
 |---|---|---|
@@ -295,6 +308,7 @@ Die Confidence-Gewichtung: Titel 45 %, Primary-Artist 25 %, Artist-Overlap 20 %,
 ## Dokumentation
 
 - [Setup & Installation](docs/setup.md) — Schritt-für-Schritt-Einrichtung
+- [Deployment mit Coolify](docs/coolify.md) — Server-Betrieb mit Docker Compose
 - [Neuen Sender hinzufügen](docs/add-station.md) — Sender konfigurieren
 
 ---

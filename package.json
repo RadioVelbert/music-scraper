@@ -15,7 +15,7 @@
     "test:watch": "vitest"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

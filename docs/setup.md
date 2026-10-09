@@ -89,9 +89,15 @@ Für den täglichen Betrieb ohne Terminal:
 
 ---
 
+## Server-Betrieb mit Coolify (empfohlen)
+
+Siehe [Deployment mit Coolify](coolify.md).
+
+---
+
 ## Server-Betrieb (Linux/PM2)
 
-Für dauerhaften Betrieb auf einem Server:
+Alternativ ohne Docker:
 
 ```bash
 npm install -g pm2

@@ -62,6 +62,12 @@ import {
   songKeyFromMetadataOrFallback
 } from './dedup.js';
 
+// Report output directory. Relative paths resolve against the working directory (local default: ./reports);
+// in Docker REPORTS_DIR points into the persistent data volume.
+function reportsPath(...segments) {
+  return path.resolve(process.env.REPORTS_DIR || 'reports', ...segments);
+}
+
 export function parserForStation(station) {
   switch (station.parser) {
     case 'dlf_nova':
@@ -2376,7 +2382,7 @@ export function runReport({ configPath, dbPath, weekStart, csv, gzip = false, gz
   const overallRows = getOverallTrackCounts(db, ranges.current.startUtcIso, ranges.current.endUtcIso);
   const crossAnalytics = buildCrossStationAnalytics(stationAnalytics, overallRows);
 
-  const reportPath = path.resolve(`reports/${weekStart}_weekly.md`);
+  const reportPath = reportsPath(`${weekStart}_weekly.md`);
   const filesWritten = [];
   filesWritten.push(writeMarkdownReport({
     weekStart,
@@ -2390,7 +2396,7 @@ export function runReport({ configPath, dbPath, weekStart, csv, gzip = false, gz
   }));
 
   if (csv) {
-    filesWritten.push(...writeCsvExports({ csvDir: path.resolve('reports/csv'), stationAnalytics, crossAnalytics }));
+    filesWritten.push(...writeCsvExports({ csvDir: reportsPath('csv'), stationAnalytics, crossAnalytics }));
   }
 
   const gzFiles = [];
@@ -2427,7 +2433,7 @@ export function runStationReport({ configPath, dbPath, stationId, weekStart, gzi
     currentTotalPlays: totalPlays
   });
 
-  const outPath = path.resolve(`reports/stations/${weekStart}_${stationId}.md`);
+  const outPath = reportsPath('stations', `${weekStart}_${stationId}.md`);
   const filePath = writeStationMarkdownReport({
     stationResult,
     weekStart,
@@ -2534,7 +2540,7 @@ export function runCoverageAudit({ configPath, dbPath, date, logger }) {
     });
   }
 
-  const mdPath = path.resolve(`reports/coverage/${day}_coverage.md`);
+  const mdPath = reportsPath('coverage', `${day}_coverage.md`);
   const lines = [
     `# Music Scraper Coverage Audit ${day}`,
     '',

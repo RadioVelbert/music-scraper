@@ -1,0 +1,5 @@
+# Shell scripts and the Dockerfile must keep LF endings, also in Windows checkouts (core.autocrlf=true),
+# otherwise the container fails with "/bin/sh^M: not found".
+*.sh text eol=lf
+*.command text eol=lf
+Dockerfile text eol=lf

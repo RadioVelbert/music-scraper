@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { createRequire } from 'node:module';
@@ -81,9 +82,8 @@ function registerApiDbHooks(logger) {
     }
     ACTIVE_API_DBS.clear();
   };
+  // SIGINT/SIGTERM are handled by startApiServer (graceful shutdown ending in process.exit, which fires this hook).
   process.once('exit', closeAll);
-  process.once('SIGINT', closeAll);
-  process.once('SIGTERM', closeAll);
 }
 
 export function parseRange(from, to) {
@@ -1372,6 +1372,30 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
   };
 }
 
+// Optional HTTP Basic Auth for public deployments. /api/health stays open for container health checks.
+function createBasicAuthMiddleware({ user, password, realm = 'Music Scraper' }) {
+  // Compare fixed-length digests so timingSafeEqual neither throws on length mismatch nor leaks the length.
+  const digest = (value) => crypto.createHash('sha256').update(String(value)).digest();
+  const expectedUser = digest(user);
+  const expectedPassword = digest(password);
+
+  return (req, res, next) => {
+    if (req.path === '/api/health') return next();
+    const match = /^Basic\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+    if (match) {
+      const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+      const separator = decoded.indexOf(':');
+      if (separator >= 0) {
+        const userOk = crypto.timingSafeEqual(digest(decoded.slice(0, separator)), expectedUser);
+        const passwordOk = crypto.timingSafeEqual(digest(decoded.slice(separator + 1)), expectedPassword);
+        if (userOk && passwordOk) return next();
+      }
+    }
+    res.set('WWW-Authenticate', `Basic realm="${realm}", charset="UTF-8"`);
+    return res.status(401).send('Authentication required');
+  };
+}
+
 export function createApiApp({ configPath, dbPath, logger }) {
   let express;
   try {
@@ -1381,6 +1405,13 @@ export function createApiApp({ configPath, dbPath, logger }) {
   }
 
   const app = express();
+  const authUser = process.env.BASIC_AUTH_USER || '';
+  const authPassword = process.env.BASIC_AUTH_PASSWORD || '';
+  if (authUser && authPassword) {
+    app.use(createBasicAuthMiddleware({ user: authUser, password: authPassword }));
+  } else {
+    logger.warn('BASIC_AUTH_USER/BASIC_AUTH_PASSWORD not set: dashboard and admin endpoints are publicly accessible');
+  }
   app.use(express.json());
   app.use('/assets', express.static(path.join(PUBLIC_DIR, 'assets')));
 
@@ -1437,67 +1468,128 @@ function listenOnPort(app, port, logger) {
   });
 }
 
-function quoteShellArg(value) {
-  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
-}
+const HOURLY_CRON = '0 * * * *';
+const DAILY_CRON = '20 4 * * *';
+// Must stay below Docker's default stop timeout (10s) so we exit on our own instead of being SIGKILLed.
+const SHUTDOWN_TIMEOUT_MS = 8000;
 
-function runCliCommand(commandName, args) {
+// Runs CLI commands as child processes so long ingest/maintenance runs never block the API event loop.
+// Jobs run strictly one after another because they all write to the same SQLite file; a job that is
+// already queued or running is not queued a second time.
+function createJobRunner({ logger }) {
   const cliPath = path.resolve(__dirname, 'cli.js');
-  const command = [quoteShellArg(process.execPath), quoteShellArg(cliPath), quoteShellArg(commandName), ...args.map(quoteShellArg)].join(' ');
-  return new Promise((resolve, reject) => {
-    exec(command, { cwd: path.resolve(__dirname, '..'), maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (stdout?.trim()) console.log(`[cron] ${commandName} stdout\n${stdout.trim()}`);
-      if (stderr?.trim()) console.error(`[cron] ${commandName} stderr\n${stderr.trim()}`);
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
+  const queued = new Set();
+  let tail = Promise.resolve();
+  let activeChild = null;
+  let stopping = false;
+
+  const runCliCommand = (commandName, args, env) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cliPath, commandName, ...args], {
+      cwd: path.resolve(__dirname, '..'),
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'inherit', 'inherit']
+    });
+    activeChild = child;
+    child.once('error', (error) => {
+      activeChild = null;
+      reject(error);
+    });
+    child.once('exit', (code, signal) => {
+      activeChild = null;
+      if (code === 0) resolve();
+      else reject(new Error(`${commandName} exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
     });
   });
-}
 
-function initHourlyCron({ configPath, dbPath }) {
-  let cron;
-  try {
-    cron = require('node-cron');
-  } catch (error) {
-    console.error('[cron] node-cron nicht installiert. Bitte `npm install node-cron` ausführen.', error);
-    return;
-  }
-
-  let isRunning = false;
-  const runHourlyJobs = async () => {
-    if (isRunning) {
-      console.log('[cron] Lauf uebersprungen: vorheriger Job laeuft noch.');
+  // buildSteps is evaluated when the job starts, so date arguments refer to the actual run time.
+  const enqueue = (name, buildSteps) => {
+    if (stopping) return;
+    if (queued.has(name)) {
+      logger.info({ job: name }, 'job skipped: already queued or running');
       return;
     }
-
-    isRunning = true;
-    const startedAt = new Date().toISOString();
-    console.log(`[cron] Start: ${startedAt}`);
-
-    try {
-      await runCliCommand('ingest', ['--config', configPath, '--db', dbPath]);
-      await runCliCommand('maintain-db', ['--db', dbPath]);
-      console.log(`[cron] Erfolg: ingest + maintain-db abgeschlossen (${new Date().toISOString()})`);
-    } catch (error) {
-      console.error(`[cron] Fehler: ${(error && error.message) || String(error)}`);
-    } finally {
-      isRunning = false;
-      console.log(`[cron] Ende: ${new Date().toISOString()}`);
-    }
+    queued.add(name);
+    tail = tail.then(async () => {
+      const startedAt = Date.now();
+      try {
+        if (stopping) return;
+        logger.info({ job: name }, 'job started');
+        for (const [commandName, args, env] of buildSteps()) {
+          if (stopping) return;
+          await runCliCommand(commandName, args, env);
+        }
+        logger.info({ job: name, durationMs: Date.now() - startedAt }, 'job finished');
+      } catch (error) {
+        logger.error({ job: name, err: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt }, 'job failed');
+      } finally {
+        queued.delete(name);
+      }
+    });
   };
 
-  cron.schedule('0 * * * *', () => {
-    void runHourlyJobs();
-  });
+  const stop = (timeoutMs) => {
+    stopping = true;
+    const child = activeChild;
+    if (!child) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill('SIGTERM');
+    });
+  };
 
-  console.log(`[cron] Initialisiert: 0 * * * * (db=${dbPath})`);
+  return { enqueue, stop };
 }
 
-export async function startApiServer({ configPath, dbPath, port = 8787 }) {
+function initScheduler({ jobs, configPath, dbPath, logger }) {
+  const cron = require('node-cron');
+  const berlinYesterday = () => DateTime.now().setZone(BERLIN_TZ).minus({ days: 1 }).toISODate();
+  const berlinWeekStart = () => DateTime.now().setZone(BERLIN_TZ).startOf('week').toISODate();
+
+  const tasks = [
+    // Hourly: scrape, clean up, and refresh yesterday's daily stats (late plays still arrive after midnight).
+    cron.schedule(HOURLY_CRON, () => jobs.enqueue('hourly', () => [
+      ['ingest', ['--config', configPath, '--db', dbPath]],
+      ['maintain-db', ['--db', dbPath]],
+      ['evaluate-daily', ['--config', configPath, '--db', dbPath, '--date', berlinYesterday()]]
+    ]), { timezone: BERLIN_TZ }),
+    // Daily: coverage audit for yesterday and the weekly report files.
+    cron.schedule(DAILY_CRON, () => jobs.enqueue('daily', () => [
+      ['audit-coverage', ['--config', configPath, '--db', dbPath, '--date', berlinYesterday()]],
+      ['report', ['--config', configPath, '--db', dbPath, '--week-start', berlinWeekStart(), '--csv']]
+    ]), { timezone: BERLIN_TZ })
+  ];
+
+  logger.info({ hourly: HOURLY_CRON, daily: DAILY_CRON, timezone: BERLIN_TZ, dbPath }, 'scheduler initialised');
+  return tasks;
+}
+
+function registerGracefulShutdown({ server, jobs, cronTasks, logger }) {
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'shutting down');
+    setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS).unref();
+    for (const task of cronTasks) task.stop();
+    await Promise.all([
+      jobs.stop(SHUTDOWN_TIMEOUT_MS - 1000),
+      new Promise((resolve) => server.close(() => resolve()))
+    ]);
+    // process.exit triggers the 'exit' hook that closes the API database.
+    process.exit(0);
+  };
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+}
+
+export async function startApiServer({ configPath, dbPath, port = 8787, startupJob = false }) {
   const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+  // Fail fast on a missing or invalid config instead of on the first request or job.
+  loadConfig(configPath);
   const app = createApiApp({ configPath, dbPath, logger });
 
   let server;
@@ -1519,7 +1611,17 @@ export async function startApiServer({ configPath, dbPath, port = 8787 }) {
     throw new Error(`Could not start API server: no free port found from ${port} to ${selectedPort}`);
   }
 
-  initHourlyCron({ configPath, dbPath });
+  const jobs = createJobRunner({ logger });
+  const cronTasks = initScheduler({ jobs, configPath, dbPath, logger });
+  registerGracefulShutdown({ server, jobs, cronTasks, logger });
+
+  if (startupJob) {
+    jobs.enqueue('startup', () => [
+      ['daily-job', ['--config', configPath, '--db', dbPath, '--make-report', '--audit-coverage'], {
+        YRPA_RELEASE_BACKFILL_DAILY_LOOKUPS: process.env.YRPA_RELEASE_BACKFILL_STARTUP_LOOKUPS || '260'
+      }]
+    ]);
+  }
 
   return server;
 }
