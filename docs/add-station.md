@@ -57,7 +57,7 @@ Manche APIs liefern Titel für einen Zeitraum. Platzhalter in der URL werden bei
 | `{from_unix}` / `{to_unix}` | Unix-Sekunden (`_unix_ms` für Millisekunden) |
 | `{limit:200}` | Für „letzte N Titel“-APIs: so viele Titel, wie seit dem letzten Abruf nötig sind (ca. 1 pro 2 Minuten), höchstens die angegebene API-Grenze |
 
-Das Fenster umfasst die **Rückschau** (Standard 180 Minuten, im Sender-Dialog unter „Erweitert“ einstellbar). War der Sender länger nicht erreichbar, wird automatisch ab dem letzten erfolgreichen Abruf nachgeholt, höchstens 48 Stunden. Beim ersten Abruf werden die letzten 24 Stunden geholt. Doppelte Einträge aus überlappenden Fenstern werden erkannt.
+Das Fenster umfasst die **Rückschau** (Standard 180 Minuten, im Sender-Dialog unter „Erweitert“ einstellbar). War der Sender länger nicht erreichbar, wird automatisch ab dem neuesten gespeicherten Play nachgeholt, höchstens 48 Stunden. Hat der Sender noch keine Plays, werden die letzten 24 Stunden geholt. Doppelte Einträge aus überlappenden Fenstern werden erkannt.
 
 Beispiel **Radio Neandertal** (in `config.yaml` bereits enthalten):
 

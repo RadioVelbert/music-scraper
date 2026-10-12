@@ -112,9 +112,9 @@ describe('time window URLs', () => {
   it('extends the lookback after downtime, capped at 48h', () => {
     const now = new Date('2026-10-12T20:00:00Z');
     const minutesBack = (date) => (now.getTime() - date.getTime()) / 60000;
-    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastSuccessAtUtc: '2026-10-12T19:00:00Z' }))).toBe(120);
-    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastSuccessAtUtc: '2026-10-12T14:00:00Z' }))).toBe(375);
-    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastSuccessAtUtc: '2026-10-01T00:00:00Z' }))).toBe(2880);
+    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastPlayAtUtc: '2026-10-12T19:00:00Z' }))).toBe(120);
+    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastPlayAtUtc: '2026-10-12T14:00:00Z' }))).toBe(375);
+    expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120, lastPlayAtUtc: '2026-10-01T00:00:00Z' }))).toBe(2880);
     expect(minutesBack(timeWindowStart(now, { lookbackMinutes: 120 }))).toBe(1440);
   });
 });

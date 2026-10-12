@@ -43,14 +43,14 @@ export function resolveSourceUrl(url, { from, to, timezone = 'Europe/Berlin' }) 
   });
 }
 
-// Window start: the configured lookback, extended to cover the gap since the last successful run
-// (e.g. after downtime), capped at 48h. The first run fetches the last 24h.
-export function timeWindowStart(now, { lookbackMinutes, lastSuccessAtUtc } = {}) {
+// Window start: the configured lookback, extended to cover the gap since the newest stored play
+// (downtime, or runs that fetched too little), capped at 48h. A station without plays fetches the last 24h.
+export function timeWindowStart(now, { lookbackMinutes, lastPlayAtUtc } = {}) {
   const lookback = Number(lookbackMinutes) || DEFAULT_LOOKBACK_MINUTES;
   let minutes = lookback;
-  const lastSuccessMs = lastSuccessAtUtc ? Date.parse(lastSuccessAtUtc) : NaN;
-  if (Number.isFinite(lastSuccessMs)) {
-    minutes = Math.max(lookback, (now.getTime() - lastSuccessMs) / 60000 + CATCH_UP_OVERLAP_MINUTES);
+  const lastPlayMs = lastPlayAtUtc ? Date.parse(lastPlayAtUtc) : NaN;
+  if (Number.isFinite(lastPlayMs)) {
+    minutes = Math.max(lookback, (now.getTime() - lastPlayMs) / 60000 + CATCH_UP_OVERLAP_MINUTES);
   } else {
     minutes = Math.max(lookback, FIRST_RUN_LOOKBACK_MINUTES);
   }

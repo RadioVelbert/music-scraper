@@ -49,10 +49,10 @@ describe('{limit} placeholder for "last N songs" APIs', () => {
     const url = 'https://api.radiovelbert.de/api/songs/history?limit={limit:200}';
     expect(hasTimeWindow(url)).toBe(true);
     // hourly run with 90 min lookback → 45 songs
-    const hourly = timeWindowStart(now, { lookbackMinutes: 90, lastSuccessAtUtc: '2026-10-12T11:00:00Z' });
+    const hourly = timeWindowStart(now, { lookbackMinutes: 90, lastPlayAtUtc: '2026-10-12T11:00:00Z' });
     expect(resolveSourceUrl(url, { from: hourly, to: now })).toBe('https://api.radiovelbert.de/api/songs/history?limit=45');
     // 5 h downtime → more, first run → capped at 200
-    const catchUp = timeWindowStart(now, { lookbackMinutes: 90, lastSuccessAtUtc: '2026-10-12T07:00:00Z' });
+    const catchUp = timeWindowStart(now, { lookbackMinutes: 90, lastPlayAtUtc: '2026-10-12T07:00:00Z' });
     expect(resolveSourceUrl(url, { from: catchUp, to: now })).toBe('https://api.radiovelbert.de/api/songs/history?limit=158');
     const firstRun = timeWindowStart(now, { lookbackMinutes: 90 });
     expect(resolveSourceUrl(url, { from: firstRun, to: now })).toBe('https://api.radiovelbert.de/api/songs/history?limit=200');

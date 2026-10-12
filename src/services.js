@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { DateTime } from 'luxon';
 import { isLautfmStation, loadStationConfigs } from './stationStore.js';
 import { getSettings } from './settings.js';
-import { getStationStatus, markStationRunFinished, markStationRunStarted } from './stationStatus.js';
+import { markStationRunFinished, markStationRunStarted } from './stationStatus.js';
 import { hasTimeWindow, resolveSourceUrl, timeWindowStart } from './sourceUrl.js';
 import { runDisplayNameMaintenance, upsertTrackDisplay } from './displayNames.js';
 import { JsonGenericParser } from './parsers/jsonGeneric.js';
@@ -1948,11 +1948,11 @@ export async function runBackfillDeezer({
 
 // Fetches and parses one station: primary URL first, then fallbacks. URLs with {from}/{to}
 // placeholders get a time window (see sourceUrl.js). Shared by the ingest and the admin "Test" button.
-export async function fetchStationPlays(station, { logger, now = new Date(), lastSuccessAtUtc = null } = {}) {
+export async function fetchStationPlays(station, { logger, now = new Date(), lastPlayAtUtc = null } = {}) {
   const fetcher = fetcherForStation(station);
   const parser = parserForStation(station);
   const urlsToTry = [station.playlist_url, ...(station.fallback_urls ?? [])];
-  const windowFrom = timeWindowStart(now, { lookbackMinutes: station.lookback_minutes, lastSuccessAtUtc });
+  const windowFrom = timeWindowStart(now, { lookbackMinutes: station.lookback_minutes, lastPlayAtUtc });
   const attempts = [];
 
   for (const template of urlsToTry) {
@@ -2127,7 +2127,8 @@ export async function runIngest({ configPath, dbPath, stationIds = null, logger 
     try {
       const fetched = await fetchStationPlays(station, {
         logger,
-        lastSuccessAtUtc: getStationStatus(db, station.id)?.last_success_at_utc ?? null
+        // Based on stored plays, not on the last successful run: a run that fetched too little gets caught up.
+        lastPlayAtUtc: db.prepare('select max(played_at_utc) as t from plays where station_id = ?').get(station.id)?.t ?? null
       });
       let plays = fetched.plays;
       const usedUrl = fetched.usedUrl;
