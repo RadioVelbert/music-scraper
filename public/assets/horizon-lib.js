@@ -155,7 +155,8 @@ export const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', key: 'dashboard', icon: AppIcons.Grid },
   { href: '/new-titles', label: 'Neue Titel', key: 'new-titles', icon: AppIcons.Sparkle },
   { href: '/weekly-reports', label: 'Wochenberichte', key: 'weekly-reports', icon: AppIcons.Report },
-  { href: '/charts', label: 'Charts', key: 'charts', icon: AppIcons.Chart },
+  { href: '/charts/radio', label: 'Radio-Charts', key: 'charts-radio', icon: AppIcons.Chart },
+  { href: '/charts/billboard', label: 'Billboard 200', key: 'charts-billboard', icon: AppIcons.Disc },
   { href: '/my-station', label: 'Mein Sender', key: 'my-station', icon: AppIcons.Radio },
   { href: '/admin', label: 'Administration', key: 'admin', icon: AppIcons.Sliders },
   { href: '/api/docs', label: 'API', key: 'api', icon: AppIcons.Code, external: true }

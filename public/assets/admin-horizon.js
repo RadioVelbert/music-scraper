@@ -1321,7 +1321,7 @@ function DatabaseTab({ data, reload }) {
         <${Chakra.VStack} align="stretch" spacing="4" maxW="720px">
           <${Chakra.RadioGroup} value=${scope} onChange=${setScope} colorScheme="red">
             <${Chakra.Stack} direction=${{ base: 'column', md: 'row' }} spacing="6">
-              <${Chakra.Radio} value="all">Alle gesammelten Daten (Plays, Statistiken, Metadaten)<//>
+              <${Chakra.Radio} value="all">Alle gesammelten Daten (Plays, Statistiken, Metadaten, Charts)<//>
               <${Chakra.Radio} value="station">Nur Daten eines Senders<//>
             <//>
           <//>

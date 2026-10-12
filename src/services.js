@@ -2759,7 +2759,10 @@ const CLEARABLE_TABLES = [
   'track_metadata',
   'track_display',
   'track_enrichment',
-  'canonical_map'
+  'canonical_map',
+  // Charts are refetched on the next run, but only the current chart week.
+  'chart_entries',
+  'chart_runs'
 ];
 
 // Admin "DB leeren". scope "all": every collected record (station configuration, settings, blocked tracks

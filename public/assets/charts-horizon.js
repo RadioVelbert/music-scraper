@@ -27,6 +27,13 @@ const TREND = {
   same: { icon: Icons.MinusIcon, color: 'textMuted', label: 'gleich' }
 };
 
+// URL slug → chart id and sidebar entry
+const PAGES = {
+  radio: { chartId: 'radiocharts_de', navKey: 'charts-radio' },
+  billboard: { chartId: 'billboard_200', navKey: 'charts-billboard' }
+};
+const PAGE = PAGES[window.location.pathname.split('/').filter(Boolean)[1]] || PAGES.radio;
+
 function weekLabel(week) {
   const match = /^(\d{4})-W(\d{2})$/.exec(week || '');
   return match ? `KW ${Number(match[2])}/${match[1]}` : week || '–';
@@ -47,7 +54,7 @@ function Movement({ entry }) {
 
 function ChartsApp() {
   const [charts, setCharts] = React.useState(null);
-  const [chartId, setChartId] = React.useState('');
+  const chartId = PAGE.chartId;
   const [week, setWeek] = React.useState('');
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
@@ -56,10 +63,7 @@ function ChartsApp() {
 
   React.useEffect(() => {
     apiFetch('/api/charts')
-      .then((rows) => {
-        setCharts(rows);
-        if (rows[0]) setChartId(rows[0].id);
-      })
+      .then((rows) => setCharts(rows))
       .catch((e) => setError(String(e?.message ?? e)));
   }, []);
 
@@ -92,9 +96,9 @@ function ChartsApp() {
 
   return html`
     <${AppShell}
-      activeKey="charts"
-      title="Charts"
-      subtitle=${chart ? `${chart.name} · ${weekLabel(data?.week)}` : 'Externe Charts im Vergleich mit unseren Sendern'}
+      activeKey=${PAGE.navKey}
+      title=${chart?.name || 'Charts'}
+      subtitle=${chart ? `${chart.provider} · ${weekLabel(data?.week)}` : 'Externe Charts im Vergleich mit unseren Sendern'}
       controls=${chart?.weeks?.length ? html`
         <${Chakra.Select} size="sm" w="150px" value=${week || chart.weeks[0]} onChange=${(e) => setWeek(e.target.value === chart.weeks[0] ? '' : e.target.value)}>
           ${chart.weeks.map((w) => html`<option key=${w} value=${w}>${weekLabel(w)}</option>`)}
@@ -104,12 +108,6 @@ function ChartsApp() {
       ${error ? html`<${Chakra.Alert} status="error" borderRadius="14px" mb="6"><${Chakra.AlertIcon} />${error}<//>` : null}
       ${!charts ? html`<${LoadingSpinner} label="Lade Charts…" size="lg" py="24" />` : html`
         <${Chakra.VStack} align="stretch" spacing="6">
-          ${charts.length > 1 ? html`
-            <${Chakra.Tabs} variant="soft-rounded" colorScheme="brand" index=${Math.max(0, charts.findIndex((c) => c.id === chartId))} onChange=${(i) => { setChartId(charts[i].id); setWeek(''); }}>
-              <${Chakra.TabList}>${charts.map((c) => html`<${Chakra.Tab} key=${c.id}>${c.name}<//>`)}<//>
-            <//>
-          ` : null}
-
           ${chart && !chart.weeks.length ? html`
             <${Chakra.Alert} status=${chart.run?.last_status === 'error' ? 'error' : 'info'} borderRadius="14px">
               <${Chakra.AlertIcon} />

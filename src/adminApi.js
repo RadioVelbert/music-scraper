@@ -19,7 +19,8 @@ import { stationDueInfo } from './jobs.js';
 import { hasTimeWindow } from './sourceUrl.js';
 import { StationSchema } from './config.js';
 
-const COUNTED_TABLES = [
+// Labels for the database view; every table is listed, unknown ones under their own name.
+const TABLE_LABELS = [
   ['plays', 'Plays'],
   ['track_metadata', 'Track-Metadaten'],
   ['track_display', 'Schreibweisen'],
@@ -29,8 +30,13 @@ const COUNTED_TABLES = [
   ['daily_overall_track_stats', 'Tagesstatistik gesamt'],
   ['daily_station_stats', 'Tagesstatistik Sender'],
   ['play_dedup_events', 'Dedup-Ereignisse'],
+  ['chart_entries', 'Chart-Einträge'],
+  ['chart_runs', 'Chart-Abrufe'],
   ['blocked_tracks', 'Gesperrte Tracks'],
-  ['job_runs', 'Job-Historie']
+  ['job_runs', 'Job-Historie'],
+  ['stations', 'Sender'],
+  ['station_status', 'Sender-Status'],
+  ['app_settings', 'Einstellungen']
 ];
 const STATS_CACHE_MS = 15000;
 // dbstat reads every page; skip the per-table breakdown for big files.
@@ -58,12 +64,17 @@ function collectDbStats(db, dbPath) {
   const pageCount = db.pragma('page_count', { simple: true });
   const freePages = db.pragma('freelist_count', { simple: true });
 
-  const tables = COUNTED_TABLES.map(([name, label]) => ({
-    name,
-    label,
-    rows: db.prepare(`select count(*) as c from ${name}`).get().c,
-    bytes: null
-  }));
+  const labels = new Map(TABLE_LABELS);
+  const order = (name) => (labels.has(name) ? TABLE_LABELS.findIndex(([n]) => n === name) : TABLE_LABELS.length);
+  const tables = db.prepare("select name from sqlite_master where type = 'table' and name not like 'sqlite_%'").all()
+    .map(({ name }) => name)
+    .sort((a, b) => order(a) - order(b) || a.localeCompare(b))
+    .map((name) => ({
+      name,
+      label: labels.get(name) ?? name,
+      rows: db.prepare(`select count(*) as c from "${name.replace(/"/g, '""')}"`).get().c,
+      bytes: null
+    }));
 
   if (files.db <= DBSTAT_MAX_BYTES) {
     try {

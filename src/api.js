@@ -1561,7 +1561,9 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   app.get('/weekly-reports', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'weekly-reports.html')));
   app.get('/my-station', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'my-station.html')));
   app.get('/admin', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'admin.html')));
-  app.get('/charts', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'charts.html')));
+  // One page per chart (/charts/radio, /charts/billboard); the page picks the chart from the path.
+  app.get('/charts', (_req, res) => res.redirect('/charts/radio'));
+  app.get('/charts/:slug', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'charts.html')));
   // Chart rows keep the chart's own spelling (no display-name rewrite).
   app.get('/api/charts', (_req, res) => {
     res.locals.skipDisplayNames = true;
