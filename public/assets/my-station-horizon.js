@@ -303,6 +303,7 @@ function MyStationApp() {
   const [changing, setChanging] = React.useState(false);
   const [overview, setOverview] = React.useState(null);
   const [overviewLoading, setOverviewLoading] = React.useState(false);
+  const [fetchState, setFetchState] = React.useState('');
   const stationId = myStation?.id ?? '';
 
   React.useEffect(() => {
@@ -348,6 +349,15 @@ function MyStationApp() {
   }
 
   const cache = overview?.cache;
+  const noPlays = !overviewLoading && overview && Number(overview.my_plays || 0) === 0;
+  const fetchNow = async () => {
+    try {
+      await apiSend(`/api/admin/stations/${encodeURIComponent(myStation.id)}/run`, 'POST');
+      setFetchState('Abruf gestartet – in ein paar Sekunden neu laden.');
+    } catch (e) {
+      setFetchState(String(e?.message ?? e));
+    }
+  };
   const value = (v) => (overviewLoading ? '…' : formatNumber(v ?? 0));
 
   return html`
@@ -378,6 +388,21 @@ function MyStationApp() {
               ? html`<${Chakra.Text}>Abgleich von ${formatClock(cache.computedAt)} Uhr${cache.cached ? ' (gespeichert)' : ''} · nächster Abgleich ab ${formatClock(cache.expiresAt)} Uhr (${formatRelative(cache.expiresAt)})<//>`
               : null}
         <//>
+
+        ${noPlays ? html`
+          <${Chakra.Alert} status="warning" borderRadius="14px" alignItems="flex-start">
+            <${Chakra.AlertIcon} />
+            <${Chakra.Box} flex="1">
+              <${Chakra.Text} fontWeight="700">Für ${myStation.name} sind in den letzten ${days} Tagen noch keine Plays gespeichert.<//>
+              <${Chakra.Text} fontSize="sm">Den Abrufstatus siehst du unter Administration → Übersicht. Erfasst werden nur Titel zwischen den eingestellten Uhrzeiten (Standard 6–21 Uhr).<//>
+              ${fetchState ? html`<${Chakra.Text} fontSize="sm" mt="1">${fetchState}<//>` : null}
+            <//>
+            <${Chakra.HStack} spacing="2">
+              <${Chakra.Button} size="sm" colorScheme="brand" onClick=${fetchNow}>Jetzt abrufen<//>
+              <${Chakra.Button} size="sm" variant="ghost" as="a" href="/admin">Status<//>
+            <//>
+          <//>
+        ` : null}
 
         <${Chakra.SimpleGrid} columns=${{ base: 2, xl: 4 }} spacing=${{ base: '3', md: '4' }}>
           <${StatTile} accent label="Plays gesamt" value=${value(overview?.my_plays)} icon=${AppIcons.Activity} hint=${`letzte ${days} Tage`} />

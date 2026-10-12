@@ -214,7 +214,11 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
       if (res.statusCode >= 400 || !body || typeof body !== 'object') return sendJson(body);
       const payload = { ...body, cache: cacheMeta(now, false) };
       const result = sendJson(payload);
-      myStationCache.set(key, { at: now, payload });
+      // No plays of "Mein Sender" in the window yet (e.g. right after setup): don't keep the empty result.
+      const days = Math.max(1, Math.min(90, Number(params.days) || 7));
+      const since = new Date(now - days * 86400000).toISOString();
+      const hasPlays = sharedDb.prepare('select 1 from plays where station_id = ? and played_at_utc >= ? limit 1').get(stationId, since);
+      if (hasPlays) myStationCache.set(key, { at: now, payload });
       return result;
     };
     return handler(req, res);
