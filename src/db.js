@@ -44,8 +44,14 @@ export function openDb(dbPath, { busyTimeoutMs = 20000 } = {}) {
   db.exec(schema);
   ensureTrackMetadataColumns(db);
   ensureStationColumns(db);
+  ensureChartColumns(db);
 
   return db;
+}
+
+function ensureChartColumns(db) {
+  const existing = new Set(db.prepare("select name from pragma_table_info('chart_entries')").all().map((row) => row.name));
+  if (!existing.has('image_url')) db.exec('alter table chart_entries add column image_url text');
 }
 
 function ensureStationColumns(db) {

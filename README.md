@@ -19,7 +19,7 @@ Music Scraper sammelt Playlisten von Radiosendern automatisch ein, normalisiert 
 | **Mein Sender** | Vergleich deines eigenen Senders mit dem gesamten Markt |
 | **Neue Titel** | Welche Songs sind diese Woche neu ins Radio gekommen? |
 | **Wochenberichte** | Automatisch generierte Berichte mit Top-Tracks und Bewegungen |
-| **Charts** | Radio-Charts Deutschland (radiocharts.com, stündlich) mit Abgleich: läuft der Titel bei uns / bei Mein Sender? |
+| **Charts** | Radio-Charts Deutschland (radiocharts.com, stündlich) und Billboard 200 (Alben, alle 6 Stunden) mit Abgleich: läuft der Titel bzw. Interpret bei uns / bei Mein Sender? |
 | **Song-Seite** | Cover, Album, Label, ISRC, Erscheinungsdatum, Mitwirkende und Links (Deezer, Spotify, Apple Music, YouTube …) |
 | **Administration** | Sender im Browser verwalten, Abrufe und Jobs überwachen, Datenbankgröße und Wachstum, Daten löschen |
 

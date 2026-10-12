@@ -77,14 +77,17 @@ function ChartsApp() {
 
   const chart = charts?.find((c) => c.id === chartId);
   const entries = data?.entries || [];
+  const isAlbums = data?.kind === 'albums';
+  // Album charts link to the artist's most played track.
+  const linkKey = (e) => (isAlbums ? e.top_track_key : e.track_key);
   const visible = entries.filter((e) => {
     if (filter === 'mine') return e.my_plays_7d > 0;
     if (filter === 'missing') return !e.my_plays_7d;
-    if (filter === 'unknown') return !e.track_key;
+    if (filter === 'unknown') return !e.matched;
     return true;
   });
   const mineCount = entries.filter((e) => e.my_plays_7d > 0).length;
-  const matchedCount = entries.filter((e) => e.track_key).length;
+  const matchedCount = entries.filter((e) => e.matched).length;
   const newCount = entries.filter((e) => !e.prev_position).length;
 
   return html`
@@ -125,7 +128,7 @@ function ChartsApp() {
 
           <${PanelCard}
             title=${chart?.name || 'Charts'}
-            subtitle=${chart ? html`Quelle: <${Chakra.Link} href=${chart.url} isExternal color="accent">${chart.provider}<//> · Plays = letzte 7 Tage bei unseren Sendern` : null}
+            subtitle=${chart ? html`Quelle: <${Chakra.Link} href=${chart.url} isExternal color="accent">${chart.provider}<//> · ${isAlbums ? 'Album-Chart: Plays = alle Titel des Interpreten, letzte 7 Tage bei unseren Sendern' : 'Plays = letzte 7 Tage bei unseren Sendern'}` : null}
             icon=${AppIcons.Chart}
             p="0"
             right=${html`
@@ -144,10 +147,10 @@ function ChartsApp() {
                       <${Chakra.Tr}>
                         <${Chakra.Th} py="3" w="1%">Platz<//>
                         <${Chakra.Th} py="3" w="1%" textAlign="center">Trend<//>
-                        <${Chakra.Th} py="3">Titel<//>
-                        <${Chakra.Th} py="3">Label<//>
+                        <${Chakra.Th} py="3">${isAlbums ? 'Album' : 'Titel'}<//>
+                        ${isAlbums ? null : html`<${Chakra.Th} py="3">Label<//>`}
                         <${Chakra.Th} py="3" isNumeric>Wochen<//>
-                        <${Chakra.Th} py="3" isNumeric>Plays<//>
+                        <${Chakra.Th} py="3" isNumeric>${isAlbums ? 'Interpret-Plays' : 'Plays'}<//>
                         <${Chakra.Th} py="3" isNumeric>Sender<//>
                         <${Chakra.Th} py="3" isNumeric>Mein Sender<//>
                       <//>
@@ -156,34 +159,36 @@ function ChartsApp() {
                       ${visible.map((entry) => html`
                         <${Chakra.Tr}
                           key=${entry.position}
-                          className=${entry.track_key ? 'rv-row-clickable group' : 'group'}
+                          className=${linkKey(entry) ? 'rv-row-clickable group' : 'group'}
                           _hover=${{ bg: 'subtleBg' }}
-                          onClick=${() => entry.track_key && navigate(trackHref(entry.track_key))}
+                          onClick=${() => linkKey(entry) && navigate(trackHref(linkKey(entry)))}
                         >
                           <${Chakra.Td} py="2.5" fontSize="lg" fontWeight="800" textAlign="right">${entry.position}<//>
                           <${Chakra.Td} py="2.5"><${Movement} entry=${entry} /><//>
                           <${Chakra.Td} py="2.5" maxW="440px">
                             <${Chakra.HStack} spacing="3">
-                              ${entry.track_key
-                                ? html`<${CoverPlay} track=${{ trackKey: entry.track_key, artist: entry.artist, title: entry.title, artworkUrl: entry.artwork_url }} size="40px" />`
-                                : html`<${Chakra.Box} boxSize="40px" minW="40px" borderRadius="10px" bg="subtleBg" />`}
+                              ${linkKey(entry)
+                                ? html`<${CoverPlay} track=${{ trackKey: linkKey(entry), artist: entry.artist, title: entry.title, artworkUrl: entry.image_url || entry.artwork_url || entry.top_track_artwork }} size="40px" />`
+                                : entry.image_url
+                                  ? html`<${Chakra.Image} src=${entry.image_url} boxSize="40px" minW="40px" borderRadius="10px" objectFit="cover" loading="lazy" />`
+                                  : html`<${Chakra.Box} boxSize="40px" minW="40px" borderRadius="10px" bg="subtleBg" />`}
                               <${Chakra.Box} minW="0">
                                 <${Chakra.Text} fontWeight="700" fontSize="sm" noOfLines=${1}>${entry.title}<//>
                                 <${Chakra.Text} fontSize="sm" color="textMuted" noOfLines=${1}>${entry.artist}<//>
                               <//>
                             <//>
                           <//>
-                          <${Chakra.Td} py="2.5" fontSize="xs" color="textMuted" maxW="200px"><${Chakra.Text} noOfLines=${1}>${entry.label || '–'}<//><//>
+                          ${isAlbums ? null : html`<${Chakra.Td} py="2.5" fontSize="xs" color="textMuted" maxW="200px"><${Chakra.Text} noOfLines=${1}>${entry.label || '–'}<//><//>`}
                           <${Chakra.Td} py="2.5" isNumeric fontSize="sm">
                             ${entry.weeks ?? '–'}
                             ${entry.peak_position ? html`<${Chakra.Text} fontSize="10px" color="textMuted">Höchst: ${entry.peak_position}<//>` : null}
                           <//>
-                          <${Chakra.Td} py="2.5" isNumeric fontWeight="700">${entry.track_key ? formatNumber(entry.plays_7d) : '–'}<//>
-                          <${Chakra.Td} py="2.5" isNumeric fontSize="sm">${entry.track_key ? formatNumber(entry.stations_7d) : '–'}<//>
+                          <${Chakra.Td} py="2.5" isNumeric fontWeight="700">${entry.matched ? formatNumber(entry.plays_7d) : '–'}<//>
+                          <${Chakra.Td} py="2.5" isNumeric fontSize="sm">${entry.matched ? formatNumber(entry.stations_7d) : '–'}<//>
                           <${Chakra.Td} py="2.5" isNumeric>
                             ${entry.my_plays_7d > 0
                               ? html`<${Chakra.Badge} colorScheme="green">${formatNumber(entry.my_plays_7d)}×<//>`
-                              : html`<${Chakra.Badge} colorScheme=${entry.track_key ? 'orange' : 'gray'}>${entry.track_key ? 'fehlt' : '–'}<//>`}
+                              : html`<${Chakra.Badge} colorScheme=${entry.matched ? 'orange' : 'gray'}>${entry.matched ? 'fehlt' : '–'}<//>`}
                           <//>
                         <//>
                       `)}

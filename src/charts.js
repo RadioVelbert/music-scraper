@@ -2,17 +2,31 @@ import * as cheerio from 'cheerio';
 import { fetch } from 'undici';
 import { openDb } from './db.js';
 import { normalizeArtistTitle, primaryArtist } from './normalize.js';
+import { DateTime } from 'luxon';
 import { isoUtcNow } from './time.js';
 
 // External charts shown on the "Charts" page. offiziellecharts.de is not included: it blocks
 // automated access (Akamai bot protection) and the data is licensed.
+// kind "songs" links entries to tracks; kind "albums" (Billboard 200) links by artist.
+// minIntervalHours: Billboard only changes weekly and the page is ~5 MB, so it isn't fetched every hour.
 export const CHARTS = [
   {
     id: 'radiocharts_de',
     name: 'Radio-Charts Deutschland',
     provider: 'MusicTrace / radiocharts.com',
     url: 'https://radiocharts.com/html/charts_de_main.htm',
+    kind: 'songs',
+    minIntervalHours: 0,
     parse: parseRadiocharts
+  },
+  {
+    id: 'billboard_200',
+    name: 'Billboard 200',
+    provider: 'Billboard',
+    url: 'https://www.billboard.com/charts/billboard-200/',
+    kind: 'albums',
+    minIntervalHours: 6,
+    parse: parseBillboard
   }
 ];
 
@@ -84,6 +98,47 @@ export function parseRadiocharts(html) {
   return { week, weekLabel: `${weekMatch[1]}/${weekMatch[2]}`, entries };
 }
 
+export function parseBillboard(html) {
+  const $ = cheerio.load(html);
+  const weekMatch = /Week of ([A-Za-z]+ \d{1,2}, \d{4})/.exec($.root().text());
+  const date = weekMatch ? DateTime.fromFormat(weekMatch[1], 'LLLL d, yyyy', { locale: 'en' }) : null;
+  if (!date?.isValid) throw new Error('Chartwoche nicht gefunden');
+  const week = `${date.weekYear}-W${String(date.weekNumber).padStart(2, '0')}`;
+
+  const entries = [];
+  $('.o-chart-results-list-row-container').each((_i, el) => {
+    const row = $(el);
+    const position = toInt(row.find('span.c-label').first().text());
+    const titleEl = row.find('h3#title-of-a-story').first();
+    const title = titleEl.text().replace(/\s+/g, ' ').trim();
+    const artist = titleEl.nextAll('span').first().text().replace(/\s+/g, ' ').trim();
+    if (!position || !title || !artist) return;
+    // Mobile block: "LW" label followed by last week, peak, weeks on chart
+    const items = row.find('li').toArray();
+    const lwIndex = items.findIndex((li) => $(li).children('span').first().text().trim() === 'LW');
+    const values = lwIndex >= 0
+      ? items.slice(lwIndex + 1).filter((li) => ($(li).attr('class') || '').includes('o-chart-results-list__item'))
+        .slice(0, 3).map((li) => $(li).children('span').first().text().trim())
+      : [];
+    const prev = toInt(values[0]);
+    const img = row.find('img').first();
+    const image = [img.attr('data-lazy-src'), img.attr('src')].find((src) => src && /^https?:/.test(src) && !/lazyload|fallback/i.test(src)) || null;
+    entries.push({
+      position,
+      prev_position: prev,
+      peak_position: toInt(values[1]),
+      weeks: toInt(values[2]),
+      trend: !prev ? 'new' : prev > position ? 'up' : prev < position ? 'down' : 'same',
+      artist,
+      title,
+      label: null,
+      image_url: image
+    });
+  });
+  if (!entries.length) throw new Error('Keine Chart-Einträge gefunden');
+  return { week, weekLabel: date.toFormat('dd.LL.yyyy'), entries };
+}
+
 // Links a chart entry to our track identity: exact normalized key, else title + primary artist.
 function createTrackResolver(db) {
   const exact = db.prepare('select 1 from plays where track_key = ? limit 1');
@@ -106,17 +161,31 @@ export async function runChartsFetch({ dbPath, logger }) {
   try {
     for (const chart of CHARTS) {
       const now = isoUtcNow();
+      const lastRun = db.prepare('select last_fetched_at_utc, last_status from chart_runs where chart_id = ?').get(chart.id);
+      if (chart.minIntervalHours && lastRun?.last_status === 'ok'
+        && Date.now() - Date.parse(lastRun.last_fetched_at_utc) < chart.minIntervalHours * 3600000) {
+        results.push({ chart: chart.id, skipped: true });
+        continue;
+      }
       try {
         const parsed = chart.parse(await fetchDecoded(chart.url));
         const resolve = createTrackResolver(db);
         const insert = db.prepare(`
-          insert into chart_entries(chart_id, chart_week, position, prev_position, peak_position, weeks, trend, artist, title, label, track_key, fetched_at_utc)
-          values (@chart_id, @chart_week, @position, @prev_position, @peak_position, @weeks, @trend, @artist, @title, @label, @track_key, @fetched_at_utc)
+          insert into chart_entries(chart_id, chart_week, position, prev_position, peak_position, weeks, trend, artist, title, label, track_key, image_url, fetched_at_utc)
+          values (@chart_id, @chart_week, @position, @prev_position, @peak_position, @weeks, @trend, @artist, @title, @label, @track_key, @image_url, @fetched_at_utc)
         `);
         db.transaction(() => {
           db.prepare('delete from chart_entries where chart_id = ? and chart_week = ?').run(chart.id, parsed.week);
           for (const entry of parsed.entries) {
-            insert.run({ ...entry, chart_id: chart.id, chart_week: parsed.week, track_key: resolve(entry.artist, entry.title), fetched_at_utc: now });
+            insert.run({
+              ...entry,
+              image_url: entry.image_url ?? null,
+              chart_id: chart.id,
+              chart_week: parsed.week,
+              // Album titles don't identify a track; album charts are linked by artist when read.
+              track_key: chart.kind === 'songs' ? resolve(entry.artist, entry.title) : null,
+              fetched_at_utc: now
+            });
           }
           db.prepare(`
             insert into chart_runs(chart_id, last_fetched_at_utc, last_week, last_status, last_error, entries) values (?, ?, ?, 'ok', null, ?)
@@ -139,7 +208,7 @@ export async function runChartsFetch({ dbPath, logger }) {
   } finally {
     db.close();
   }
-  if (results.every((r) => r.error)) throw new Error('Alle Charts fehlgeschlagen');
+  if (results.length && results.every((r) => r.error)) throw new Error('Alle Charts fehlgeschlagen');
   return results;
 }
 
@@ -151,6 +220,30 @@ export function listCharts(db) {
     run: runs.get(chart.id) ?? null,
     weeks: weeks.all(chart.id).map((row) => row.chart_week)
   }));
+}
+
+function artistKey(artist) {
+  return primaryArtist(normalizeArtistTitle(artist, 'x').artist);
+}
+
+// Album charts: plays of the artist (primary artist) at our stations, plus their most played track.
+function artistAirplay(db, since, myStation) {
+  const rows = db.prepare(`
+    select artist, track_key, station_id, count(*) as plays from plays
+    where played_at_utc >= ? group by artist, track_key, station_id
+  `).all(since);
+  const byArtist = new Map();
+  for (const row of rows) {
+    const key = primaryArtist(row.artist);
+    if (!key) continue;
+    if (!byArtist.has(key)) byArtist.set(key, { plays: 0, my: 0, stations: new Set(), tracks: new Map() });
+    const entry = byArtist.get(key);
+    entry.plays += row.plays;
+    entry.stations.add(row.station_id);
+    if (row.station_id === myStation) entry.my += row.plays;
+    entry.tracks.set(row.track_key, (entry.tracks.get(row.track_key) || 0) + row.plays);
+  }
+  return byArtist;
 }
 
 // Chart entries plus our own airplay over the last 7 days.
@@ -171,5 +264,22 @@ export function getChartEntries(db, chartId, week) {
     where e.chart_id = ? and e.chart_week = ?
     order by e.position
   `).all(since, since, myStation, since, chartId, chartWeek);
-  return { week: chartWeek, myStationId: myStation, entries };
+  const chart = CHARTS.find((c) => c.id === chartId);
+  if (chart?.kind === 'albums') {
+    const airplay = artistAirplay(db, since, myStation);
+    const artwork = db.prepare('select artwork_url from track_metadata where track_key = ?');
+    for (const entry of entries) {
+      const stats = airplay.get(artistKey(entry.artist));
+      entry.plays_7d = stats?.plays ?? 0;
+      entry.stations_7d = stats?.stations.size ?? 0;
+      entry.my_plays_7d = stats?.my ?? 0;
+      const top = stats ? [...stats.tracks.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] : null;
+      entry.top_track_key = top ?? null;
+      entry.top_track_artwork = top ? artwork.get(top)?.artwork_url ?? null : null;
+      entry.matched = Boolean(stats);
+    }
+  } else {
+    for (const entry of entries) entry.matched = Boolean(entry.track_key);
+  }
+  return { week: chartWeek, kind: chart?.kind ?? 'songs', myStationId: myStation, entries };
 }
