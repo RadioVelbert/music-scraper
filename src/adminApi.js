@@ -6,6 +6,8 @@ import {
   getStationConfig,
   saveStationConfig,
   setStationEnabled,
+  setStationOrder,
+  STATION_ORDER_SQL,
   deleteStation,
   importStationsFromConfig,
   isLautfmStation
@@ -128,7 +130,7 @@ function collectStationOverview(db, { jobs }) {
   }
   const configs = new Map(listStationConfigs(db, { includeDisabled: true }).map((station) => [station.id, station]));
 
-  return db.prepare('select id, name, url, enabled from stations order by name collate nocase').all().map((row) => {
+  return db.prepare(`select id, name, url, enabled, sort_order from stations order by ${STATION_ORDER_SQL}`).all().map((row) => {
     const config = configs.get(row.id) ?? null;
     const status = statusById.get(row.id) ?? null;
     const due = config ? stationDueInfo(config, status, settings) : null;
@@ -225,6 +227,13 @@ export function registerAdminRoutes(app, { db, dbPath, configPath, logger, jobs,
     logger.info({ station: station.id }, 'station created');
     if (catalog && station.enabled) catalog.ingest([station.id], { trigger: 'manual', fast: true });
     return station;
+  }));
+
+  // Custom order used by all station dropdowns and lists. Registered before "/:id" so "order" isn't taken as an id.
+  app.put('/api/admin/stations/order', handle((req) => {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids)) throw new Error('ids fehlt');
+    return { ids: setStationOrder(db, ids) };
   }));
 
   app.put('/api/admin/stations/:id', handle((req) => {

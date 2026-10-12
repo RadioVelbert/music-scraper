@@ -60,7 +60,7 @@ Alle Songs, die in einem bestimmten Zeitraum zum ersten Mal gespielt wurden — 
 
 ### Mein Sender
 
-Wähle deinen Sender aus und vergleiche ihn mit dem Rest des Markts. Zeigt verpasste Tracks, Geheimtipps und Sender-spezifische Rotation.
+Vergleicht den als „Mein Sender“ markierten Sender (Administration → Sender oder „Ändern“ auf der Seite) mit dem Rest des Markts: verpasste Tracks und Geheimtipps. Der Sender wird bei jedem Aufruf aus der Konfiguration gelesen; der Abgleich wird eine Stunde lang gespeichert, damit häufiges Neuladen die Datenbank nicht belastet.
 
 ![Mein Sender](docs/screenshots/my-station.png)
 
@@ -78,7 +78,7 @@ Automatisch generierte Übersichten mit Top-Tracks, Neueinsteigern, Absteigern u
 
 ### Administration
 
-Sender im Browser anlegen und bearbeiten (onlineradiobox-Suche, laut.fm, beliebige JSON-APIs, HTML-Parser), Quelle vorab testen, Abruf-Intervalle überschreiben. Die Übersicht zeigt, wann welcher Sender zuletzt ausgelesen wurde, was dabei herauskam, welche Jobs laufen, wie groß die Datenbank ist und wie schnell sie wächst.
+Sender im Browser anlegen und bearbeiten (onlineradiobox-Suche, laut.fm, beliebige JSON-APIs, HTML-Parser), Quelle vorab testen, Abruf-Intervalle überschreiben und die Reihenfolge der Sender für alle Auswahllisten festlegen (ziehen, Pfeile oder A–Z). Die Übersicht zeigt, wann welcher Sender zuletzt ausgelesen wurde, was dabei herauskam, welche Jobs laufen, wie groß die Datenbank ist und wie schnell sie wächst.
 
 ![Administration](docs/screenshots/admin.png)
 

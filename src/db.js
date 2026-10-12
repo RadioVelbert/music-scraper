@@ -54,7 +54,8 @@ function ensureStationColumns(db) {
     config_json: 'text',
     enabled: 'integer not null default 1',
     created_at_utc: 'text',
-    updated_at_utc: 'text'
+    updated_at_utc: 'text',
+    sort_order: 'integer'
   };
   for (const [name, type] of Object.entries(required)) {
     if (!existing.has(name)) db.exec(`alter table stations add column ${name} ${type}`);
@@ -312,7 +313,11 @@ export function upsertDailyOverallTrackStat(db, row) {
 }
 
 export function listStations(db) {
-  return dbQueries(db).prepare('listStations', 'select id, name, url, timezone from stations order by name asc').all();
+  // Custom order from the admin area first; stations without a position follow alphabetically.
+  return dbQueries(db).prepare('listStations', `
+    select id, name, url, timezone from stations
+    order by sort_order is null, sort_order, name collate nocase
+  `).all();
 }
 
 export function searchTracks(db, query, limit = 30) {

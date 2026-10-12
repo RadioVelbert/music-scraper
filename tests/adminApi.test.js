@@ -124,6 +124,48 @@ describe('admin API', () => {
     expect((await call('GET', '/api/tracks?limit=all')).body).toHaveLength(131);
   });
 
+  it('resolves "Mein Sender" from the configuration and caches comparisons for an hour', async () => {
+    const { call } = await startApp();
+    // config.yaml has no my_station flag yet
+    expect((await call('GET', '/api/my-station')).body).toEqual({ station: null });
+    expect((await call('PUT', '/api/my-station', { stationId: 'nope' })).status).toBe(404);
+
+    expect((await call('PUT', '/api/my-station', { stationId: 'alpha' })).body.station).toMatchObject({ id: 'alpha', name: 'Alpha FM' });
+    expect((await call('GET', '/api/my-station')).body.station.id).toBe('alpha');
+
+    const first = await call('GET', '/api/my-station/overview?days=7');
+    expect(first.body).toMatchObject({ my_station_id: 'alpha', my_plays: 1, cache: { cached: false } });
+    const second = await call('GET', '/api/my-station/overview?days=7');
+    expect(second.body.cache).toMatchObject({ cached: true, computedAt: first.body.cache.computedAt });
+    expect(Date.parse(second.body.cache.expiresAt) - Date.parse(second.body.cache.computedAt)).toBe(60 * 60 * 1000);
+    // Other filters are cached separately.
+    expect((await call('GET', '/api/my-station/overview?days=14')).body.cache.cached).toBe(false);
+
+    // Switching "Mein Sender" must not serve the old station's cached comparison.
+    await call('PUT', '/api/my-station', { stationId: 'velbert' });
+    const switched = await call('GET', '/api/my-station/overview?days=7');
+    expect(switched.body).toMatchObject({ my_station_id: 'velbert', my_plays: 0, cache: { cached: false } });
+    const stations = (await call('GET', '/api/admin/stations')).body;
+    expect(stations.filter((s) => s.config?.my_station).map((s) => s.id)).toEqual(['velbert']);
+  });
+
+  it('applies the custom station order to all station lists', async () => {
+    const { call } = await startApp();
+    expect((await call('GET', '/api/stations')).body.map((s) => s.id)).toEqual(['alpha', 'velbert']);
+
+    const saved = await call('PUT', '/api/admin/stations/order', { ids: ['velbert', 'alpha'] });
+    expect(saved.status).toBe(200);
+    expect((await call('GET', '/api/stations')).body.map((s) => s.id)).toEqual(['velbert', 'alpha']);
+    expect((await call('GET', '/api/admin/stations')).body.map((s) => s.id)).toEqual(['velbert', 'alpha']);
+
+    // New stations are appended at the end.
+    await call('POST', '/api/admin/stations', { id: 'aaa', name: 'AAA Radio', playlist_url: 'u', parser: 'json' });
+    expect((await call('GET', '/api/stations')).body.map((s) => s.id)).toEqual(['velbert', 'alpha', 'aaa']);
+
+    expect((await call('PUT', '/api/admin/stations/order', { ids: ['ghost'] })).status).toBe(400);
+    expect((await call('PUT', '/api/admin/stations/order', {})).status).toBe(400);
+  });
+
   it('returns display spellings in track lists', async () => {
     const { call, trackKey } = await startApp();
     const tracks = await call('GET', '/api/tracks?limit=10');

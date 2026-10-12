@@ -7,7 +7,6 @@ stations:
     parser: "onlineradiobox"
     fetcher: "http"
     timezone: "Europe/Berlin"
-    my_station: true
 
   - id: "planet_radio"
     name: "Planet Radio"
@@ -313,6 +312,7 @@ stations:
     parser: "lautfm_json"
     fetcher: "http"
     timezone: "Europe/Berlin"
+    my_station: true
 
   - id: "radio_neandertal"
     name: "Radio Neandertal"

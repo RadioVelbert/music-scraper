@@ -20,7 +20,7 @@ import {
 import { BERLIN_TZ, buildWeekRanges } from './time.js';
 import { buildTrackSeries, buildTrackSeriesByStation, buildTrackTotals } from './trends.js';
 import { runDailyEvaluation, runManualTrackMerge, deleteAndBlockTrack } from './services.js';
-import { listStationConfigs, getStationConfig, importStationsFromConfig } from './stationStore.js';
+import { listStationConfigs, getStationConfig, importStationsFromConfig, saveStationConfig } from './stationStore.js';
 import { applyDisplayNames } from './displayNames.js';
 import { getTrackDetails, getTrackPreview } from './trackDetails.js';
 import { createJobRunner, createJobCatalog, initScheduler } from './jobs.js';
@@ -34,6 +34,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.resolve(__dirname, '../public');
 const ACTIVE_API_DBS = new Set();
+const MY_STATION_CACHE_MS = 60 * 60 * 1000;
 let API_DB_HOOKS_REGISTERED = false;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATE_SCHEMA = z.string().regex(ISO_DATE_RE, 'Invalid from/to date range. Use YYYY-MM-DD.');
@@ -179,6 +180,46 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     logger?.warn?.({ err: error instanceof Error ? error.message : String(error) }, 'station seed from config failed');
   }
 
+  // "Mein Sender" comparisons are expensive: each result is kept for an hour per station and filter,
+  // so reloading the page can't trigger the queries again and again. Changing "Mein Sender" uses a new key.
+  const myStationCache = new Map();
+  const resolveMyStationId = (query) => {
+    const requested = query.stationId ? String(query.stationId).trim() : '';
+    if (requested) return requested;
+    return listStationConfigs(sharedDb, { includeDisabled: true }).find((station) => station.my_station)?.id ?? null;
+  };
+  const cacheMeta = (at, cached) => ({
+    computedAt: new Date(at).toISOString(),
+    expiresAt: new Date(at + MY_STATION_CACHE_MS).toISOString(),
+    cached
+  });
+  const withMyStationCache = (name, handler) => (req, res) => {
+    const query = normalizeQuery(req.query);
+    const stationId = resolveMyStationId(query);
+    if (!stationId) return handler(req, res);
+    const { stationId: _stationId, ...params } = query;
+    const key = `${name}|${stationId}|${JSON.stringify(Object.entries(params).sort())}`;
+    const now = Date.now();
+    const hit = myStationCache.get(key);
+    if (hit && now - hit.at < MY_STATION_CACHE_MS) {
+      // Stored payload already carries display spellings.
+      if (res.locals) res.locals.skipDisplayNames = true;
+      return res.json({ ...hit.payload, cache: cacheMeta(hit.at, true) });
+    }
+    for (const [entryKey, entry] of myStationCache) {
+      if (now - entry.at >= MY_STATION_CACHE_MS) myStationCache.delete(entryKey);
+    }
+    const sendJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode >= 400 || !body || typeof body !== 'object') return sendJson(body);
+      const payload = { ...body, cache: cacheMeta(now, false) };
+      const result = sendJson(payload);
+      myStationCache.set(key, { at: now, payload });
+      return result;
+    };
+    return handler(req, res);
+  };
+
   const closeSharedDb = () => {
     if (!ACTIVE_API_DBS.has(sharedDb)) return;
     ACTIVE_API_DBS.delete(sharedDb);
@@ -189,9 +230,31 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     }
   };
 
-  return {
+  const handlers = {
     __close: closeSharedDb,
     __db: sharedDb,
+
+    // The page asks on every visit which station is "Mein Sender" (configured in the admin area).
+    myStationCurrent: (_req, res) => {
+      const station = listStationConfigs(sharedDb, { includeDisabled: true }).find((s) => s.my_station) ?? null;
+      if (res.locals) res.locals.skipDisplayNames = true;
+      res.set?.('Cache-Control', 'no-store');
+      return res.json({ station: station ? { id: station.id, name: station.name, enabled: station.enabled } : null });
+    },
+
+    myStationSet: (req, res) => {
+      try {
+        const stationId = String(req.body?.stationId ?? '').trim();
+        const station = getStationConfig(sharedDb, stationId);
+        if (!station) return res.status(404).json({ error: 'Unbekannter oder nicht konfigurierter Sender.' });
+        const saved = saveStationConfig(sharedDb, { ...station, my_station: true });
+        logger?.info?.({ station: saved.id }, 'my station changed');
+        return res.json({ station: { id: saved.id, name: saved.name, enabled: saved.enabled } });
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
     health: (_req, res) => {
       res.json({ ok: true, time: new Date().toISOString() });
     },
@@ -228,7 +291,9 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
           'GET /api/reports/station/:stationId?weekStart=YYYY-MM-DD',
           'GET /api/insights/new-this-week?weekStart=YYYY-MM-DD&stationId=ID&limit=20&releaseYear=YYYY&maxReleaseAgeDays=730',
           'POST /api/jobs/evaluate-daily {"date":"YYYY-MM-DD"}',
-          'GET /api/my-station/overview?days=7',
+          'GET /api/my-station  (current "Mein Sender" from the station configuration)',
+          'PUT /api/my-station {"stationId":"..."}',
+          'GET /api/my-station/overview?days=7  (results cached for 1 hour per station and filter)',
           'GET /api/my-station/missed?days=7&minOtherPlays=3&minOtherStations=2&limit=100',
           'GET /api/my-station/exclusives?days=7&maxOtherStations=1&limit=100',
           'GET /api/admin/overview  (DB size and growth, station status, jobs, schedules)',
@@ -1411,6 +1476,11 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
       }
     },
   };
+
+  handlers.myStationOverview = withMyStationCache('overview', handlers.myStationOverview);
+  handlers.myStationMissed = withMyStationCache('missed', handlers.myStationMissed);
+  handlers.myStationExclusives = withMyStationCache('exclusives', handlers.myStationExclusives);
+  return handlers;
 }
 
 // Optional HTTP Basic Auth for public deployments. /api/health stays open for container health checks.
@@ -1515,6 +1585,8 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   app.get('/api/reports/station/:stationId', handlers.stationReport);
   app.get('/api/insights/new-this-week', handlers.newThisWeek);
   app.post('/api/jobs/evaluate-daily', handlers.evaluateDaily);
+  app.get('/api/my-station', handlers.myStationCurrent);
+  app.put('/api/my-station', handlers.myStationSet);
   app.get('/api/my-station/overview', handlers.myStationOverview);
   app.get('/api/my-station/missed', handlers.myStationMissed);
   app.get('/api/my-station/exclusives', handlers.myStationExclusives);

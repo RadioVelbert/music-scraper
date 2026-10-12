@@ -5,27 +5,26 @@ import {
   html,
   horizonTheme,
   apiFetch,
+  apiSend,
   formatNumber,
+  formatRelative,
   AppShell,
   PanelCard,
+  StatTile,
+  AppIcons,
   useUiColors,
   Icons,
   PlayButton,
   LoadingSpinner
 } from './horizon-lib.js';
 
-// ─── Cookie helpers ──────────────────────────────────────────────────────────
+// "Mein Sender" comes from the station configuration (admin area) and is checked on every visit.
+// Earlier versions kept the choice in a cookie for a year, which hid later changes – remove it.
+document.cookie = 'my_station_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax';
 
-const COOKIE_KEY = 'my_station_id';
-
-function getCookie(name) {
-  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function setCookie(name, value, days = 365) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+function formatClock(iso) {
+  if (!iso) return '–';
+  return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -43,24 +42,6 @@ function DaySelector({ value, onChange }) {
           onClick=${() => onChange(d)}
         >${d} Tage<//>
       `)}
-    <//>
-  `;
-}
-
-function StatCard({ label, value, colorScheme = 'blue' }) {
-  const ui = useUiColors();
-  return html`
-    <${Chakra.Box}
-      bg=${ui.cardBg}
-      border="1px solid"
-      borderColor=${ui.lineColor}
-      borderRadius="16px"
-      p="5"
-      flex="1"
-      minW="140px"
-    >
-      <${Chakra.Text} fontSize="xs" color=${ui.textSecondary} mb="1">${label}<//>
-      <${Chakra.Text} fontSize="2xl" fontWeight="700" color="${colorScheme}.500">${formatNumber(value)}<//>
     <//>
   `;
 }
@@ -95,16 +76,31 @@ function TrackRow({ track, badge, badgeScheme = 'blue' }) {
 
 // ─── Sender-Auswahl Setup ────────────────────────────────────────────────────
 
-function StationSetup({ stations, onSelect }) {
+function StationSetup({ stations, current, onSelect, onCancel }) {
   const ui = useUiColors();
-  const [selected, setSelected] = React.useState('');
+  const [selected, setSelected] = React.useState(current || '');
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const result = await apiSend('/api/my-station', 'PUT', { stationId: selected });
+      onSelect(result.station);
+    } catch (e) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return html`
     <${Chakra.VStack} align="stretch" spacing="6" maxW="480px" mx="auto" py="8">
       <${Chakra.VStack} align="start" spacing="1">
         <${Chakra.Heading} size="md">Welcher ist dein Sender?<//>
         <${Chakra.Text} fontSize="sm" color=${ui.textSecondary}>
-          Wähle deinen Sender aus der Liste. Die Auswahl wird im Browser gespeichert.
+          Die Auswahl wird als „Mein Sender“ in der Senderkonfiguration gespeichert (auch unter Administration → Sender änderbar) und gilt für alle.
         <//>
       <//>
 
@@ -120,16 +116,13 @@ function StationSetup({ stations, onSelect }) {
         `)}
       <//>
 
-      <${Chakra.Button}
-        colorScheme="blue"
-        isDisabled=${!selected}
-        onClick=${() => {
-          setCookie(COOKIE_KEY, selected);
-          onSelect(selected);
-        }}
-        borderRadius="10px"
-      >
-        Sender festlegen
+      ${error ? html`<${Chakra.Alert} status="error" borderRadius="12px"><${Chakra.AlertIcon} />${error}<//>` : null}
+
+      <${Chakra.HStack}>
+        <${Chakra.Button} colorScheme="brand" isDisabled=${!selected} isLoading=${saving} onClick=${save} flex="1">
+          Sender festlegen
+        <//>
+        ${onCancel ? html`<${Chakra.Button} variant="ghost" onClick=${onCancel}>Abbrechen<//>` : null}
       <//>
     <//>
   `;
@@ -305,11 +298,17 @@ function MyStationApp() {
   const [days, setDays] = React.useState(7);
   const [tab, setTab] = React.useState(0);
   const [stations, setStations] = React.useState([]);
-  const [stationId, setStationId] = React.useState(() => getCookie(COOKIE_KEY) ?? '');
+  // undefined = still checking, null = no "Mein Sender" configured
+  const [myStation, setMyStation] = React.useState(undefined);
+  const [changing, setChanging] = React.useState(false);
   const [overview, setOverview] = React.useState(null);
   const [overviewLoading, setOverviewLoading] = React.useState(false);
+  const stationId = myStation?.id ?? '';
 
   React.useEffect(() => {
+    apiFetch('/api/my-station')
+      .then((data) => setMyStation(data.station ?? null))
+      .catch(() => setMyStation(null));
     apiFetch('/api/stations').then((data) => setStations(Array.isArray(data) ? data : []));
   }, []);
 
@@ -322,23 +321,39 @@ function MyStationApp() {
       .finally(() => setOverviewLoading(false));
   }, [days, stationId]);
 
-  const stationName = stationId
-    ? (stations.find((s) => s.id === stationId)?.name ?? stationId)
-    : 'Mein Sender';
-
-  // Kein Sender gewählt → Setup-Screen
-  if (!stationId) {
+  if (myStation === undefined) {
     return html`
-      <${AppShell} activeKey="my-station" title="Mein Sender" subtitle="Sender einrichten">
-        <${StationSetup} stations=${stations} onSelect=${setStationId} />
+      <${AppShell} activeKey="my-station" title="Mein Sender" subtitle="Sender wird ermittelt">
+        <${LoadingSpinner} label="Prüfe, welcher Sender „Mein Sender“ ist…" size="lg" py="24" />
       <//>
     `;
   }
 
+  // No "Mein Sender" configured, or switching → selection
+  if (!myStation || changing) {
+    return html`
+      <${AppShell} activeKey="my-station" title="Mein Sender" subtitle="Sender festlegen">
+        <${StationSetup}
+          stations=${stations}
+          current=${myStation?.id}
+          onSelect=${(station) => {
+            setOverview(null);
+            setMyStation(station);
+            setChanging(false);
+          }}
+          onCancel=${myStation ? () => setChanging(false) : null}
+        />
+      <//>
+    `;
+  }
+
+  const cache = overview?.cache;
+  const value = (v) => (overviewLoading ? '…' : formatNumber(v ?? 0));
+
   return html`
     <${AppShell}
       activeKey="my-station"
-      title=${stationName}
+      title=${myStation.name}
       subtitle="Vergleich mit anderen Sendern: was verpasst dein Sender, was ist exklusiv?"
       controls=${html`
         <${Chakra.HStack} spacing="3">
@@ -347,39 +362,28 @@ function MyStationApp() {
             size="sm"
             variant="ghost"
             leftIcon=${React.createElement(Icons.SettingsIcon)}
-            onClick=${() => {
-              setCookie(COOKIE_KEY, '');
-              setStationId('');
-              setOverview(null);
-            }}
-            title="Sender wechseln"
+            onClick=${() => setChanging(true)}
+            title="Anderen Sender als „Mein Sender“ festlegen"
           >Ändern<//>
         <//>
       `}
     >
       <${Chakra.VStack} align="stretch" spacing="5">
 
-        <${Chakra.Flex} gap="4" flexWrap="wrap">
-          <${StatCard}
-            label="Plays gesamt"
-            value=${overviewLoading ? '…' : (overview?.my_plays ?? 0)}
-            colorScheme="blue"
-          />
-          <${StatCard}
-            label="Einzigartige Tracks"
-            value=${overviewLoading ? '…' : (overview?.my_unique_tracks ?? 0)}
-            colorScheme="purple"
-          />
-          <${StatCard}
-            label="Verpasste Tracks"
-            value=${overviewLoading ? '…' : (overview?.missed_count ?? 0)}
-            colorScheme="orange"
-          />
-          <${StatCard}
-            label="Nur dein Sender"
-            value=${overviewLoading ? '…' : (overview?.exclusives_count ?? 0)}
-            colorScheme="green"
-          />
+        <${Chakra.HStack} spacing="2" color="textMuted" fontSize="sm" flexWrap="wrap">
+          <${AppIcons.Clock} />
+          ${overviewLoading
+            ? html`<${Chakra.Text}>Gleiche ${myStation.name} mit den anderen Sendern ab – das kann ein paar Sekunden dauern…<//>`
+            : cache
+              ? html`<${Chakra.Text}>Abgleich von ${formatClock(cache.computedAt)} Uhr${cache.cached ? ' (gespeichert)' : ''} · nächster Abgleich ab ${formatClock(cache.expiresAt)} Uhr (${formatRelative(cache.expiresAt)})<//>`
+              : null}
+        <//>
+
+        <${Chakra.SimpleGrid} columns=${{ base: 2, xl: 4 }} spacing=${{ base: '3', md: '4' }}>
+          <${StatTile} accent label="Plays gesamt" value=${value(overview?.my_plays)} icon=${AppIcons.Activity} hint=${`letzte ${days} Tage`} />
+          <${StatTile} label="Einzigartige Titel" value=${value(overview?.my_unique_tracks)} icon=${AppIcons.Music} />
+          <${StatTile} label="Verpasste Titel" value=${value(overview?.missed_count)} icon=${AppIcons.Search} hint="laufen woanders, hier nicht" />
+          <${StatTile} label="Nur dein Sender" value=${value(overview?.exclusives_count)} icon=${AppIcons.Sparkle} hint="Geheimtipps" />
         <//>
 
         <${PanelCard}

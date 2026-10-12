@@ -27,8 +27,10 @@ function parseRow(row) {
   }
 }
 
+export const STATION_ORDER_SQL = 'sort_order is null, sort_order, name collate nocase';
+
 export function listStationConfigs(db, { includeDisabled = false } = {}) {
-  return db.prepare('select id, config_json, enabled from stations where config_json is not null order by name collate nocase')
+  return db.prepare(`select id, config_json, enabled from stations where config_json is not null order by ${STATION_ORDER_SQL}`)
     .all()
     .map(parseRow)
     .filter((station) => station && (includeDisabled || station.enabled));
@@ -59,9 +61,11 @@ export function saveStationConfig(db, input, { isNew = false, enabled } = {}) {
         }
       }
     }
+    // New stations are appended at the end of the custom order.
     db.prepare(`
-      insert into stations(id, name, url, timezone, config_json, enabled, created_at_utc, updated_at_utc)
-      values (@id, @name, @url, @timezone, @config_json, @enabled, @now, @now)
+      insert into stations(id, name, url, timezone, config_json, enabled, created_at_utc, updated_at_utc, sort_order)
+      values (@id, @name, @url, @timezone, @config_json, @enabled, @now, @now,
+        (select max(sort_order) + 1 from stations))
       on conflict(id) do update set
         name = excluded.name,
         url = excluded.url,
@@ -81,6 +85,22 @@ export function saveStationConfig(db, input, { isNew = false, enabled } = {}) {
     });
   })();
   return getStationConfig(db, station.id);
+}
+
+// ids: the new order (stations missing from the list keep their relative order after the listed ones).
+export function setStationOrder(db, ids) {
+  const order = [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id)))];
+  const known = new Set(db.prepare('select id from stations').all().map((row) => row.id));
+  const unknown = order.filter((id) => !known.has(id));
+  if (unknown.length) throw new Error(`Unbekannte Sender: ${unknown.join(', ')}`);
+  const rest = db.prepare(`select id from stations order by ${STATION_ORDER_SQL}`).all()
+    .map((row) => row.id)
+    .filter((id) => !order.includes(id));
+  const update = db.prepare('update stations set sort_order = ? where id = ?');
+  db.transaction(() => {
+    [...order, ...rest].forEach((id, index) => update.run(index, id));
+  })();
+  return [...order, ...rest];
 }
 
 export function setStationEnabled(db, id, enabled) {

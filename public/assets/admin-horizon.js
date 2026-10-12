@@ -727,24 +727,71 @@ function RunningJobs({ jobs }) {
   `;
 }
 
+const STATUS_RANK = { error: 0, empty: 1, never: 2, ok: 3 };
+
+// Sort accessors for the status table; null = keep the custom station order.
+const STATUS_SORTS = {
+  name: (row) => row.name.toLocaleLowerCase('de'),
+  status: (row) => (row.configured && row.enabled ? STATUS_RANK[row.status?.last_status || 'never'] ?? 2 : 9),
+  last: (row) => row.status?.last_finished_at_utc || '',
+  found: (row) => Number(row.status?.last_plays_inserted ?? -1),
+  next: (row) => (row.enabled ? row.nextDueAtUtc || '' : '~'),
+  plays: (row) => Number(row.plays || 0),
+  plays24h: (row) => Number(row.plays24h || 0)
+};
+
+function SortableTh({ label, sortKey, sort, onSort, isNumeric }) {
+  const active = sort.key === sortKey;
+  return html`
+    <${Chakra.Th} py="3" isNumeric=${isNumeric} cursor="pointer" userSelect="none" onClick=${() => onSort(sortKey)} _hover=${{ color: 'accent' }} color=${active ? 'accent' : undefined}>
+      ${label}${active ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+    <//>
+  `;
+}
+
 function StationStatusTable({ stations, onRun, compact = false }) {
+  // Click a header to sort; clicking it a third time returns to the custom order.
+  const [sort, setSort] = React.useState({ key: null, dir: 'asc' });
+  const onSort = (key) => setSort((prev) => {
+    if (prev.key !== key) return { key, dir: key === 'name' || key === 'next' ? 'asc' : 'desc' };
+    const firstDir = key === 'name' || key === 'next' ? 'asc' : 'desc';
+    return prev.dir === firstDir ? { key, dir: firstDir === 'asc' ? 'desc' : 'asc' } : { key: null, dir: 'asc' };
+  });
+  const rows = React.useMemo(() => {
+    if (!sort.key) return stations;
+    const get = STATUS_SORTS[sort.key];
+    const factor = sort.dir === 'asc' ? 1 : -1;
+    return [...stations].sort((a, b) => {
+      const va = get(a);
+      const vb = get(b);
+      if (va < vb) return -1 * factor;
+      if (va > vb) return 1 * factor;
+      return 0;
+    });
+  }, [stations, sort]);
+  const th = (label, key, isNumeric) => html`<${SortableTh} label=${label} sortKey=${key} sort=${sort} onSort=${onSort} isNumeric=${isNumeric} />`;
+
   return html`
     <${Chakra.TableContainer} className="horizon-scroll">
       <${Chakra.Table} size="sm">
         <${Chakra.Thead} bg="subtleBg">
           <${Chakra.Tr}>
-            <${Chakra.Th} py="3">Sender<//>
-            <${Chakra.Th} py="3">Status<//>
-            <${Chakra.Th} py="3">Letzter Abruf<//>
-            <${Chakra.Th} py="3" isNumeric>Gefunden / neu<//>
-            <${Chakra.Th} py="3">Intervall · nächster<//>
-            <${Chakra.Th} py="3" isNumeric>Plays gesamt<//>
-            <${Chakra.Th} py="3" isNumeric>24 h<//>
-            ${compact ? null : html`<${Chakra.Th} py="3"><//>`}
+            ${th('Sender', 'name')}
+            ${th('Status', 'status')}
+            ${th('Letzter Abruf', 'last')}
+            ${th('Gefunden / neu', 'found', true)}
+            ${th('Intervall · nächster', 'next')}
+            ${th('Plays gesamt', 'plays', true)}
+            ${th('24 h', 'plays24h', true)}
+            ${compact ? null : html`
+              <${Chakra.Th} py="3" textAlign="right">
+                ${sort.key ? html`<${Chakra.Button} size="xs" variant="link" colorScheme="brand" onClick=${() => setSort({ key: null, dir: 'asc' })}>Eigene Reihenfolge<//>` : null}
+              <//>
+            `}
           <//>
         <//>
         <${Chakra.Tbody}>
-          ${stations.map((row) => {
+          ${rows.map((row) => {
             const state = stationState(row);
             const status = row.status;
             return html`
@@ -828,8 +875,50 @@ function StationsTab({ data, reload, onRunStation }) {
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(null);
   const [importing, setImporting] = React.useState(false);
+  const [pendingOrder, setPendingOrder] = React.useState(null);
+  const [dragId, setDragId] = React.useState(null);
+  const [overId, setOverId] = React.useState(null);
   const toast = Chakra.useToast();
   const toastError = useToastError();
+
+  // Show the new order immediately; the server copy arrives with the next reload.
+  const rows = React.useMemo(() => {
+    if (!pendingOrder) return data.stations;
+    const byId = new Map(data.stations.map((row) => [row.id, row]));
+    const ordered = pendingOrder.map((id) => byId.get(id)).filter(Boolean);
+    return [...ordered, ...data.stations.filter((row) => !pendingOrder.includes(row.id))];
+  }, [data.stations, pendingOrder]);
+
+  const saveOrder = async (ids) => {
+    setPendingOrder(ids);
+    try {
+      await apiSend('/api/admin/stations/order', 'PUT', { ids });
+      await reload();
+    } catch (error) {
+      toastError('Reihenfolge nicht gespeichert', error);
+    } finally {
+      setPendingOrder(null);
+    }
+  };
+
+  const move = (index, delta) => {
+    const ids = rows.map((row) => row.id);
+    const target = index + delta;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    saveOrder(ids);
+  };
+
+  const dropOn = (targetId) => {
+    if (!dragId || dragId === targetId) return;
+    const ids = rows.map((row) => row.id).filter((id) => id !== dragId);
+    ids.splice(ids.indexOf(targetId), 0, dragId);
+    saveOrder(ids);
+  };
+
+  const sortAlphabetically = () => {
+    saveOrder([...rows].sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' })).map((row) => row.id));
+  };
 
   const openEditor = (row) => {
     setEditing(row);
@@ -862,11 +951,14 @@ function StationsTab({ data, reload, onRunStation }) {
     <${Chakra.VStack} align="stretch" spacing="6">
       <${PanelCard}
         title="Sender"
-        subtitle="Quellen direkt im Browser verwalten. Änderungen gelten sofort, ohne Neustart."
+        subtitle="Quellen direkt im Browser verwalten. Die Reihenfolge (ziehen oder Pfeile) gilt für alle Sender-Auswahllisten."
         icon=${AppIcons.Radio}
         p="0"
         right=${html`
           <${Chakra.HStack} pr="5" pt="5">
+            <${Chakra.Tooltip} label="Reihenfolge alphabetisch nach Namen setzen">
+              <${Chakra.Button} size="sm" variant="ghost" onClick=${sortAlphabetically} isDisabled=${Boolean(pendingOrder)}>A–Z<//>
+            <//>
             <${Chakra.Tooltip} label="Sender aus config.yaml übernehmen, die noch fehlen">
               <${Chakra.Button} size="sm" variant="ghost" onClick=${importConfig} isLoading=${importing}>config.yaml importieren<//>
             <//>
@@ -878,6 +970,7 @@ function StationsTab({ data, reload, onRunStation }) {
           <${Chakra.Table} size="sm">
             <${Chakra.Thead} bg="subtleBg">
               <${Chakra.Tr}>
+                <${Chakra.Th} py="3" w="1%">Reihenfolge<//>
                 <${Chakra.Th} py="3">Aktiv<//>
                 <${Chakra.Th} py="3">Sender<//>
                 <${Chakra.Th} py="3">Quelle<//>
@@ -887,8 +980,42 @@ function StationsTab({ data, reload, onRunStation }) {
               <//>
             <//>
             <${Chakra.Tbody}>
-              ${data.stations.map((row) => html`
-                <${Chakra.Tr} key=${row.id}>
+              ${rows.map((row, index) => html`
+                <${Chakra.Tr}
+                  key=${row.id}
+                  draggable
+                  onDragStart=${(event) => {
+                    setDragId(row.id);
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', row.id);
+                  }}
+                  onDragOver=${(event) => {
+                    event.preventDefault();
+                    if (overId !== row.id) setOverId(row.id);
+                  }}
+                  onDrop=${(event) => {
+                    event.preventDefault();
+                    dropOn(row.id);
+                    setDragId(null);
+                    setOverId(null);
+                  }}
+                  onDragEnd=${() => {
+                    setDragId(null);
+                    setOverId(null);
+                  }}
+                  opacity=${dragId === row.id ? 0.4 : 1}
+                  boxShadow=${dragId && overId === row.id && dragId !== row.id ? 'inset 0 2px 0 0 #06b6d4' : undefined}
+                >
+                  <${Chakra.Td} py="2.5">
+                    <${Chakra.HStack} spacing="1">
+                      <${Chakra.Tooltip} label="Ziehen zum Verschieben" openDelay=${500}>
+                        <span style=${{ cursor: 'grab', display: 'inline-flex' }}><${Icons.DragHandleIcon} color="textMuted" /></span>
+                      <//>
+                      <${Chakra.Text} fontSize="xs" color="textMuted" w="18px" textAlign="right">${index + 1}<//>
+                      <${Chakra.IconButton} size="xs" variant="ghost" aria-label="Nach oben" icon=${html`<${Icons.ChevronUpIcon} />`} isDisabled=${index === 0 || Boolean(pendingOrder)} onClick=${() => move(index, -1)} />
+                      <${Chakra.IconButton} size="xs" variant="ghost" aria-label="Nach unten" icon=${html`<${Icons.ChevronDownIcon} />`} isDisabled=${index === rows.length - 1 || Boolean(pendingOrder)} onClick=${() => move(index, 1)} />
+                    <//>
+                  <//>
                   <${Chakra.Td} py="2.5">
                     ${row.configured
                       ? html`<${Chakra.Switch} colorScheme="brand" isChecked=${row.enabled} onChange=${(e) => toggle(row, e.target.checked)} />`
