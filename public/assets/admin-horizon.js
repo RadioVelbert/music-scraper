@@ -1107,7 +1107,8 @@ function StationsTab({ data, reload, onRunStation }) {
 const SCHEDULE_LABELS = {
   dueCheck: ['Fällige Sender prüfen', 'jede Minute – ruft Sender ab, deren Intervall abgelaufen ist'],
   maintenance: ['Wartung + Tagesauswertung', 'stündlich – Dubletten, Schreibweisen, Release-Daten, Statistik'],
-  daily: ['Coverage-Audit + Wochenreport', 'täglich 04:20 Uhr']
+  daily: ['Coverage-Audit + Wochenreport', 'täglich 04:20 Uhr'],
+  charts: ['Charts abrufen', 'stündlich zur Minute 15 – radiocharts.com']
 };
 
 function JobsTab({ data, reload }) {
@@ -1130,7 +1131,8 @@ function JobsTab({ data, reload }) {
     ['ingest-all', 'Alle Sender abrufen', AppIcons.Radio],
     ['maintenance', 'Wartung', AppIcons.Sliders],
     ['daily', 'Wochenreport', AppIcons.Report],
-    ['deezer-backfill', 'Deezer-Abgleich', AppIcons.Disc]
+    ['deezer-backfill', 'Deezer-Abgleich', AppIcons.Disc],
+    ['charts', 'Charts abrufen', AppIcons.Report]
   ];
   return html`
     <${Chakra.VStack} align="stretch" spacing="6">

@@ -16,6 +16,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 export const SCHEDULES = {
   dueCheck: '* * * * *',
   maintenance: '0 * * * *',
+  charts: '15 * * * *',
   daily: '20 4 * * *'
 };
 
@@ -265,6 +266,14 @@ export function createJobCatalog({ jobs, configPath, dbPath }) {
         ]
       });
     },
+    charts({ trigger = 'schedule' } = {}) {
+      return jobs.enqueue({
+        name: 'charts',
+        label: 'Charts abrufen (radiocharts.com)',
+        trigger,
+        buildSteps: () => [['fetch-charts', ['--db', dbPath]]]
+      });
+    },
     deezerBackfill({ trigger = 'manual' } = {}) {
       return jobs.enqueue({
         name: 'deezer-backfill',
@@ -328,6 +337,7 @@ export function initScheduler({ jobs, catalog, db, logger }) {
   const tasks = {
     dueCheck: cron.schedule(SCHEDULES.dueCheck, checkDueStations, { timezone: BERLIN_TZ }),
     maintenance: cron.schedule(SCHEDULES.maintenance, whenEnabled(() => catalog.maintenance()), { timezone: BERLIN_TZ }),
+    charts: cron.schedule(SCHEDULES.charts, whenEnabled(() => catalog.charts()), { timezone: BERLIN_TZ }),
     daily: cron.schedule(SCHEDULES.daily, whenEnabled(() => catalog.daily()), { timezone: BERLIN_TZ })
   };
   logger.info({ ...SCHEDULES, timezone: BERLIN_TZ }, 'scheduler initialised');

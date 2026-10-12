@@ -146,6 +146,7 @@ export const AppIcons = {
   Zap: strokeIcon('ZapIcon', ['M13 2L3 14h9l-1 8 10-12h-9l1-8z']),
   Search: strokeIcon('SearchIcon', [CIRCLE(11, 11, 8), 'M21 21l-4.35-4.35']),
   Plus: strokeIcon('PlusIcon', ['M12 5v14', 'M5 12h14']),
+  Chart: strokeIcon('ChartIcon', ['M18 20V10', 'M12 20V4', 'M6 20v-6']),
   Play: fillIcon('PlayIcon', ['M8 5.14v13.72a1 1 0 0 0 1.52.85l11.02-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z']),
   Pause: fillIcon('PauseIcon', ['M6 4h4v16H6z', 'M14 4h4v16h-4z'])
 };
@@ -154,6 +155,7 @@ export const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', key: 'dashboard', icon: AppIcons.Grid },
   { href: '/new-titles', label: 'Neue Titel', key: 'new-titles', icon: AppIcons.Sparkle },
   { href: '/weekly-reports', label: 'Wochenberichte', key: 'weekly-reports', icon: AppIcons.Report },
+  { href: '/charts', label: 'Charts', key: 'charts', icon: AppIcons.Chart },
   { href: '/my-station', label: 'Mein Sender', key: 'my-station', icon: AppIcons.Radio },
   { href: '/admin', label: 'Administration', key: 'admin', icon: AppIcons.Sliders },
   { href: '/api/docs', label: 'API', key: 'api', icon: AppIcons.Code, external: true }

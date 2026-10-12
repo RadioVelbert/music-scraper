@@ -23,6 +23,7 @@ import {
   clearDatabase
 } from './services.js';
 import { openDb, dedupeStationToOnePlayPerMinute, dedupeStationByMinGapSeconds } from './db.js';
+import { runChartsFetch } from './charts.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -284,6 +285,19 @@ program
       });
     } catch (err) {
       logger.error({ err: err.message }, 'api failed');
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('fetch-charts')
+  .description('Fetch external charts (radiocharts.com) and link them to our tracks')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .action(async (opts) => {
+    try {
+      await runChartsFetch({ dbPath: opts.db, logger });
+    } catch (err) {
+      logger.error({ err: err.message }, 'fetch-charts failed');
       process.exitCode = 1;
     }
   });

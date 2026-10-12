@@ -25,6 +25,7 @@ import { applyDisplayNames } from './displayNames.js';
 import { getTrackDetails, getTrackPreview } from './trackDetails.js';
 import { createJobRunner, createJobCatalog, initScheduler } from './jobs.js';
 import { registerAdminRoutes } from './adminApi.js';
+import { listCharts, getChartEntries } from './charts.js';
 import { buildStationAnalytics } from './analytics.js';
 import { TrackVerifier } from './trackVerifier.js';
 
@@ -1560,6 +1561,17 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   app.get('/weekly-reports', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'weekly-reports.html')));
   app.get('/my-station', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'my-station.html')));
   app.get('/admin', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'admin.html')));
+  app.get('/charts', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'charts.html')));
+  // Chart rows keep the chart's own spelling (no display-name rewrite).
+  app.get('/api/charts', (_req, res) => {
+    res.locals.skipDisplayNames = true;
+    res.json(listCharts(handlers.__db));
+  });
+  app.get('/api/charts/:chartId', (req, res) => {
+    res.locals.skipDisplayNames = true;
+    const week = req.query.week ? String(req.query.week) : null;
+    res.json(getChartEntries(handlers.__db, req.params.chartId, week));
+  });
 
   app.get('/api/health', handlers.health);
   app.get('/api/docs', handlers.docs);
@@ -1673,6 +1685,7 @@ export async function startApiServer({ configPath, dbPath, port = 8787, startupJ
     // maintenance and reports run in parallel in the maintenance lane.
     scheduler.checkDueStations();
     catalog.startup();
+    catalog.charts({ trigger: 'startup' });
   }
 
   return server;

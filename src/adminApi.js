@@ -318,6 +318,7 @@ export function registerAdminRoutes(app, { db, dbPath, configPath, logger, jobs,
     } else if (type === 'maintenance') job = catalog.maintenance({ trigger: 'manual' });
     else if (type === 'daily') job = catalog.daily({ trigger: 'manual' });
     else if (type === 'deezer-backfill') job = catalog.deezerBackfill({ trigger: 'manual' });
+    else if (type === 'charts') job = catalog.charts({ trigger: 'manual' });
     else throw Object.assign(new Error(`Unbekannter Job: ${type}`), { status: 404 });
     return { ok: true, jobId: job?.id ?? null, skipped: !job };
   }));

@@ -176,3 +176,29 @@ create table if not exists app_settings(
   value_json text not null,
   updated_at_utc text not null
 );
+
+-- External charts (radiocharts.com), fetched hourly; track_key links an entry to our plays
+create table if not exists chart_entries(
+  chart_id text not null,
+  chart_week text not null,
+  position integer not null,
+  prev_position integer,
+  peak_position integer,
+  weeks integer,
+  trend text,
+  artist text not null,
+  title text not null,
+  label text,
+  track_key text,
+  fetched_at_utc text not null,
+  primary key(chart_id, chart_week, position)
+);
+
+create table if not exists chart_runs(
+  chart_id text primary key,
+  last_fetched_at_utc text,
+  last_week text,
+  last_status text,
+  last_error text,
+  entries integer
+);
