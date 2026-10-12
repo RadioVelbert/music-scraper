@@ -76,7 +76,8 @@ const JSON_PRESETS = [
       time_path: 'last_played',
       isrc_path: 'isrc',
       deezer_id_path: 'deezer_id',
-      artwork_path: 'artwork'
+      artwork_path: 'artwork',
+      artwork_base_url: 'https://api.radiovelbert.de'
     }
   },
   {

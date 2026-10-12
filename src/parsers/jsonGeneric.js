@@ -66,7 +66,7 @@ export class JsonGenericParser extends BaseParser {
 
     const {
       items_path, artist_path, title_path, time_path, time_format, filter_path, filter_value, split_separator,
-      isrc_path, deezer_id_path, artwork_path
+      isrc_path, deezer_id_path, artwork_path, artwork_base_url
     } = this.options;
     let items = getPath(payload, items_path);
     if (items && !Array.isArray(items) && typeof items === 'object') items = [items];
@@ -99,7 +99,7 @@ export class JsonGenericParser extends BaseParser {
       const play = { playedAt, artistRaw, titleRaw, sourceUrl };
       if (isrc_path) play.isrc = asText(getPath(item, isrc_path)).toUpperCase() || null;
       if (deezer_id_path) play.deezerId = asText(getPath(item, deezer_id_path)) || null;
-      if (artwork_path) play.artworkUrl = absoluteUrl(getPath(item, artwork_path), sourceUrl);
+      if (artwork_path) play.artworkUrl = absoluteUrl(getPath(item, artwork_path), artwork_base_url || sourceUrl);
       plays.push(play);
     }
     return plays;

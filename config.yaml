@@ -309,7 +309,9 @@ stations:
     name: "RadioVelbert"
     # Own API (max. 200 entries ≈ 10 h). {limit:200} fetches only as many songs as needed since the last run;
     # Deezer ID, ISRC and cover come with the data, so no Deezer search is needed.
-    playlist_url: "https://api.radiovelbert.de/api/songs/history?limit={limit:200}"
+    # The API runs on the same server and is fetched via its internal address (the public domain isn't
+    # reachable from containers); covers keep the public base URL for the browser.
+    playlist_url: "http://192.168.10.12:4000/api/songs/history?limit={limit:200}"
     parser: "json"
     json:
       items_path: "data"
@@ -320,6 +322,7 @@ stations:
       deezer_id_path: "deezer_id"
       isrc_path: "isrc"
       artwork_path: "artwork"
+      artwork_base_url: "https://api.radiovelbert.de"
     lookback_minutes: 90
     fetcher: "http"
     timezone: "Europe/Berlin"

@@ -30,7 +30,9 @@ export const JsonSourceSchema = z.object({
   // Optional extras some APIs deliver (e.g. RadioVelbert): exact identity without a Deezer search, cover art.
   isrc_path: z.string().trim().optional().default(''),
   deezer_id_path: z.string().trim().optional().default(''),
-  artwork_path: z.string().trim().optional().default('')
+  artwork_path: z.string().trim().optional().default(''),
+  // Base for relative cover paths when the API is fetched via an internal address the browser can't reach.
+  artwork_base_url: z.string().trim().optional().default('')
 });
 
 export const StationSchema = z.object({
