@@ -58,7 +58,7 @@ function toDbRow(track, result, cached = null) {
     verification_confidence: Number.isFinite(result.confidence) ? result.confidence : null,
     external_track_id: result.externalTrackId ?? null,
     external_url: result.externalUrl ?? null,
-    artwork_url: result.artworkUrl ?? null,
+    artwork_url: result.artworkUrl ?? cached?.artwork_url ?? null,
     release_date_utc: result.releaseDateUtc ?? null,
     genre: result.genre ?? null,
     album: result.album ?? null,

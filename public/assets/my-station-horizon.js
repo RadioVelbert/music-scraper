@@ -9,7 +9,9 @@ import {
   AppShell,
   PanelCard,
   useUiColors,
-  Icons
+  Icons,
+  PlayButton,
+  LoadingSpinner
 } from './horizon-lib.js';
 
 // ─── Cookie helpers ──────────────────────────────────────────────────────────
@@ -73,9 +75,12 @@ function TrackRow({ track, badge, badgeScheme = 'blue' }) {
       onClick=${() => { window.location.href = href; }}
     >
       <${Chakra.Td} py="2" px="3">
-        <${Chakra.VStack} align="start" spacing="0">
-          <${Chakra.Text} fontWeight="600" fontSize="sm">${track.artist}<//>
-          <${Chakra.Text} fontSize="xs" color=${ui.textSecondary}>${track.title}<//>
+        <${Chakra.HStack} spacing="3">
+          <${PlayButton} track=${{ trackKey: track.track_key, artist: track.artist, title: track.title, artworkUrl: track.artwork_url || null }} size="xs" />
+          <${Chakra.VStack} align="start" spacing="0" minW="0">
+            <${Chakra.Text} fontWeight="700" fontSize="sm" noOfLines=${1}>${track.title}<//>
+            <${Chakra.Text} fontSize="xs" color=${ui.textSecondary} noOfLines=${1}>${track.artist}<//>
+          <//>
         <//>
       <//>
       <${Chakra.Td} py="2" px="3" isNumeric>
@@ -172,9 +177,7 @@ function MissedTab({ days, stationId }) {
       ` : null}
 
       ${loading ? html`
-        <${Chakra.Flex} justify="center" py="8">
-          <${Chakra.Spinner} size="lg" color="orange.400" />
-        <//>
+        <${LoadingSpinner} label="Lade verpasste Titel…" py="8" />
       ` : html`
         <${PanelCard}
           title="Verpasste Tracks"
@@ -255,9 +258,7 @@ function ExclusivesTab({ days, stationId }) {
       ` : null}
 
       ${loading ? html`
-        <${Chakra.Flex} justify="center" py="8">
-          <${Chakra.Spinner} size="lg" color="green.400" />
-        <//>
+        <${LoadingSpinner} label="Lade Exklusiv-Titel…" py="8" />
       ` : html`
         <${PanelCard}
           title="Geheimtipps"

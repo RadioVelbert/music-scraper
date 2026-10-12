@@ -12,7 +12,11 @@ import {
   AppShell,
   PanelCard,
   useUiColors,
-  Icons
+  Icons,
+  PlayButton,
+  TrackCover,
+  LoadingOverlay,
+  LoadingSpinner
 } from './horizon-lib.js';
 import {
   looksLikeNonMusicTitle,
@@ -37,23 +41,8 @@ function daysText(days) {
   return `${(days / 365).toFixed(1).replace('.', ',')} Jahre alt`;
 }
 
-function PreviewControl({ previewUrl, externalUrl, compact = false }) {
-  if (previewUrl) {
-    return html`
-      <${Chakra.HStack} spacing="2" align="center">
-        <audio controls preload="none" src=${previewUrl} style=${{ height: '30px', width: compact ? '170px' : '220px' }} />
-        ${externalUrl
-          ? html`<${Chakra.Link} href=${externalUrl} target="_blank" rel="noreferrer" color="teal.500">iTunes<//>`
-          : null}
-      <//>
-    `;
-  }
-
-  if (externalUrl) {
-    return html`<${Chakra.Link} href=${externalUrl} target="_blank" rel="noreferrer" color="teal.500">Titelseite<//>`;
-  }
-
-  return html`<${Chakra.Tag} size="sm" colorScheme="orange" borderRadius="999px">Kein Preview<//>`;
+function playable(row) {
+  return { trackKey: row.track_key, artist: row.artist, title: row.title, artworkUrl: row.artwork_url || null };
 }
 
 async function copyToClipboard(value) {
@@ -351,18 +340,24 @@ function NewTitlesApp() {
           <//>
         <//>
 
-        <${PanelCard} title="Zuletzt neu hinzugefügt" subtitle=${spotlight.length ? 'Aktuelle Highlights' : 'Keine Treffer'}>
+        <${LoadingOverlay} isLoading=${loading && processed.rows.length > 0} label="Neue Titel werden geladen…">
+        <${Chakra.VStack} align="stretch" spacing="5">
+        <${PanelCard} title="Zuletzt neu hinzugefügt" subtitle=${loading && !spotlight.length ? 'Lade…' : spotlight.length ? 'Aktuelle Highlights' : 'Keine Treffer'}>
+          ${loading && !spotlight.length ? html`<${LoadingSpinner} label="Lade neue Titel…" />` : null}
           <${Chakra.SimpleGrid} columns=${{ base: 1, lg: 2, xl: 3 }} spacing="3">
             ${spotlight.map((row) => html`
               <${Chakra.Box} key=${row._id} border="1px solid" borderColor=${ui.lineColor} borderRadius="14px" p="3">
                 <${Chakra.Badge} colorScheme=${row.ageDays == null ? 'gray' : row.ageDays <= 14 ? 'green' : 'orange'} mb="2">
                   ${daysText(row.ageDays)}
                 <//>
-                <${Chakra.HStack} spacing="2" mb="2" flexWrap="wrap">
-                  <${PreviewControl} previewUrl=${row.preview_url} externalUrl=${row.external_url} compact=${true} />
-                  <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} color="blue.500">Öffnen<//>
+                <${Chakra.HStack} spacing="3" mb="2">
+                  <${TrackCover} src=${row.artwork_url} size="52px" />
+                  <${Chakra.Box} flex="1" minW="0">
+                    <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} fontWeight="700" color=${ui.textPrimary} noOfLines=${1}>${row.title}<//>
+                    <${Chakra.Text} fontSize="sm" color=${ui.textMuted} noOfLines=${1}>${row.artist}<//>
+                  <//>
+                  <${PlayButton} track=${playable(row)} size="sm" />
                 <//>
-                <${Chakra.Text} fontWeight="700" color=${ui.textPrimary}>${row.artist} - ${row.title}<//>
                 <${Chakra.HStack} spacing="2" mt="1">
                   <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>Track ID: ${row.track_key || '-'}<//>
                   ${row.track_key ? html`
@@ -394,9 +389,13 @@ function NewTitlesApp() {
                 ${processed.rows.map((row) => html`
                   <${Chakra.Tr} key=${row._id}>
                     <${Chakra.Td}>
-                      <${Chakra.Text} fontWeight="700" color=${ui.textPrimary}>${row.artist}<//>
-                      <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>${row.title}<//>
-                      <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>ID: ${row.track_key || '-'}<//>
+                      <${Chakra.HStack} spacing="3">
+                        <${PlayButton} track=${playable(row)} size="xs" />
+                        <${Chakra.Box} minW="0">
+                          <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} fontWeight="700" color=${ui.textPrimary} noOfLines=${1}>${row.title}<//>
+                          <${Chakra.Text} fontSize="sm" color=${ui.textMuted} noOfLines=${1}>${row.artist}<//>
+                        <//>
+                      <//>
                     <//>
                     <${Chakra.Td}>${formatNumber(row.total_plays)}<//>
                     <${Chakra.Td}>${formatDateTime(row.first_played_at_utc)}<//>
@@ -407,8 +406,7 @@ function NewTitlesApp() {
                     <${Chakra.Td}>${formatNumber(row.station_count)}<//>
                     <${Chakra.Td}>
                       <${Chakra.VStack} align="start" spacing="1">
-                        <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} color="blue.500">Öffnen<//>
-                        <${PreviewControl} previewUrl=${row.preview_url} externalUrl=${row.external_url} compact=${true} />
+                        <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} color="accent" fontWeight="600">Song-Seite öffnen<//>
                         ${row.track_key ? html`
                           <${Chakra.Button} size="xs" variant="outline" onClick=${() => copyToClipboard(row.track_key)}>ID kopieren<//>
                         ` : null}
@@ -422,6 +420,8 @@ function NewTitlesApp() {
               <//>
             <//>
           <//>
+        <//>
+        <//>
         <//>
       <//>
     <//>

@@ -59,13 +59,11 @@ describe('runBackfillDeezer', () => {
     const swapped = addPlay('Blinding Lights', 'The Weeknd');
     const swappedKey = swapped.trackKey;
 
-    // First call (normal order "blinding lights" / "the weeknd") → no match
-    // Second call (swapped order "the weeknd" / "blinding lights") → correct hit
-    vi.mocked(mockFetch)
-      .mockResolvedValueOnce(makeDeezerResponse([]))
-      .mockResolvedValueOnce(makeDeezerResponse([
-        makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200, isrc: 'USRC00000001' })
-      ]));
+    // Deezer returns the real track for every query: the normal order ("blinding lights" / "the weeknd")
+    // is rejected by the strict matcher, the swapped lookup ("the weeknd" / "blinding lights") hits.
+    vi.mocked(mockFetch).mockResolvedValue(makeDeezerResponse([
+      makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200, isrc: 'USRC00000001' })
+    ]));
 
     // Import runBackfillDeezer fresh (undici is already mocked via vi.mock hoisting)
     const { runBackfillDeezer } = await import('../src/services.js');
@@ -103,17 +101,10 @@ describe('runBackfillDeezer', () => {
 
     expect(correct.trackKey).not.toBe(swapped.trackKey);
 
-    // For the correct key: normal-order search hits immediately
-    // For the swapped key: first call (normal order) = empty, second call (swapped order) = hit
-    vi.mocked(mockFetch)
-      .mockResolvedValueOnce(makeDeezerResponse([
-        // correct key lookup: matches directly
-        makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200 })
-      ]))
-      .mockResolvedValueOnce(makeDeezerResponse([]))  // swapped key normal-order: no match
-      .mockResolvedValueOnce(makeDeezerResponse([     // swapped key reversed: match
-        makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200 })
-      ]));
+    // Correct key: matches directly. Swapped key: normal order rejected, reversed lookup matches.
+    vi.mocked(mockFetch).mockResolvedValue(makeDeezerResponse([
+      makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200 })
+    ]));
 
     const { runBackfillDeezer } = await import('../src/services.js');
     const stats = await runBackfillDeezer({ dbPath, dryRun: false, cacheDays: 30, logger: null });
@@ -151,12 +142,10 @@ describe('runBackfillDeezer', () => {
     const { fetch: mockFetch } = await import('undici');
     const swapped = addPlay('Blinding Lights', 'The Weeknd');
 
-    // normal-order: empty; swapped-order: hit
-    vi.mocked(mockFetch)
-      .mockResolvedValueOnce(makeDeezerResponse([]))
-      .mockResolvedValueOnce(makeDeezerResponse([
-        makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200 })
-      ]));
+    // normal order rejected by the matcher; swapped order: hit
+    vi.mocked(mockFetch).mockResolvedValue(makeDeezerResponse([
+      makeDeezerItem({ id: '42', artist: 'The Weeknd', title: 'Blinding Lights', duration: 200 })
+    ]));
 
     const { runBackfillDeezer } = await import('../src/services.js');
     const stats = await runBackfillDeezer({ dbPath, dryRun: true, cacheDays: 30, logger: null });
@@ -200,7 +189,7 @@ describe('runBackfillDeezer', () => {
     const stats = await runBackfillDeezer({ dbPath, dryRun: true, cacheDays: 30, limit: 1, logger: null });
 
     expect(stats.candidates).toBe(1);
-    // Each candidate triggers up to 2 fetch calls (normal + swap retry), both return empty here
-    expect(vi.mocked(mockFetch).mock.calls.length).toBeLessThanOrEqual(2);
+    // One candidate = up to 2 lookups (normal + swap retry) × 2 search queries each; 3 candidates would be 12.
+    expect(vi.mocked(mockFetch).mock.calls.length).toBeLessThanOrEqual(4);
   });
 });

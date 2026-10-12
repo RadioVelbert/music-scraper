@@ -48,15 +48,8 @@ export function calculateConfidence(match) {
   return (titleScore * 0.45) + (primaryScore * 0.25) + (overlapScore * 0.2) + (durationScore * 0.1);
 }
 
-export async function searchTrackOnDeezer(artist, title, { durationMs = null } = {}) {
-  const normalizedInput = normalizeArtistTitle(artist, title);
-  if (!normalizedInput.artist || !normalizedInput.title) return null;
-  const inputPrimary = primaryArtist(normalizedInput.artist);
-  if (!inputPrimary) return null;
-
-  const query = `artist:"${artist}" track:"${title}"`;
-  const params = new URLSearchParams({ q: query, limit: '5' });
-
+async function fetchSearchItems(query, limit) {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
   await throttleDeezer();
   let res;
   try {
@@ -73,9 +66,10 @@ export async function searchTrackOnDeezer(artist, title, { durationMs = null } =
   }
 
   const body = await res.json();
-  const items = Array.isArray(body?.data) ? body.data : [];
-  if (!items.length) return null;
+  return Array.isArray(body?.data) ? body.data : [];
+}
 
+function bestStrictMatch(items, normalizedInput, inputPrimary, durationMs) {
   let best = null;
   for (const item of items) {
     const itemTitle = String(item?.title || '').trim();
@@ -111,14 +105,86 @@ export async function searchTrackOnDeezer(artist, title, { durationMs = null } =
       confidence,
       durationMs: Number.isFinite(itemDurationMs) ? itemDurationMs : null,
       artist: itemArtistName,
-      title: itemTitle
+      title: itemTitle,
+      coverUrl: item?.album?.cover_medium || item?.album?.cover || null
     };
     if (!best || candidate.confidence > best.confidence) {
       best = candidate;
     }
   }
+  return best && best.confidence >= 0.8 ? best : null;
+}
 
-  if (!best) return null;
-  if (best.confidence < 0.8) return null;
-  return best;
+// Deezer's advanced "artist:" filter returns no results (as of 2026-10), so the plain search comes first
+// and "track:" (still working) is the fallback. Only strict matches are accepted either way.
+export async function searchTrackOnDeezer(artist, title, { durationMs = null } = {}) {
+  const normalizedInput = normalizeArtistTitle(artist, title);
+  if (!normalizedInput.artist || !normalizedInput.title) return null;
+  const inputPrimary = primaryArtist(normalizedInput.artist);
+  if (!inputPrimary) return null;
+
+  const queries = [
+    [`${artist} ${title}`, 10],
+    [`track:"${title}"`, 25]
+  ];
+  for (const [query, limit] of queries) {
+    const match = bestStrictMatch(await fetchSearchItems(query, limit), normalizedInput, inputPrimary, durationMs);
+    if (match) return match;
+  }
+  return null;
+}
+
+const API_BASE = 'https://api.deezer.com';
+
+// Throttled GET against the public Deezer API. Deezer reports errors (quota, unknown id) as HTTP 200 + {error}.
+export async function deezerGet(pathAndQuery) {
+  await throttleDeezer();
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${pathAndQuery}`, {
+      headers: { 'user-agent': 'music-scraper/1.0 (+deezer)' },
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch (error) {
+    throw new Error(`Deezer network error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!res.ok) throw new Error(`Deezer request failed: HTTP ${res.status}`);
+  const body = await res.json();
+  if (body?.error) {
+    const err = new Error(`Deezer error: ${body.error.message || body.error.type || 'unknown'}`);
+    err.code = body.error.code;
+    throw err;
+  }
+  return body;
+}
+
+export function getDeezerTrack(id) {
+  return deezerGet(`/track/${encodeURIComponent(id)}`);
+}
+
+export function getDeezerAlbum(id) {
+  return deezerGet(`/album/${encodeURIComponent(id)}`);
+}
+
+export function getDeezerArtist(id) {
+  return deezerGet(`/artist/${encodeURIComponent(id)}`);
+}
+
+// Strict match first (same rules as the ingest correction); otherwise the best plain-search hit whose
+// title matches and whose artists overlap. Returns a Deezer track id or null.
+export async function findDeezerTrackId(artist, title) {
+  const strict = await searchTrackOnDeezer(artist, title).catch(() => null);
+  if (strict?.deezerId) return strict.deezerId;
+
+  const input = normalizeArtistTitle(artist, title);
+  if (!input.artist || !input.title) return null;
+  const body = await deezerGet(`/search?${new URLSearchParams({ q: `${artist} ${title}`, limit: '10' })}`);
+  for (const item of Array.isArray(body?.data) ? body.data : []) {
+    const candidates = [item?.title, item?.title_short].filter(Boolean);
+    const titleMatches = candidates.some((candidate) => normalizeArtistTitle(item?.artist?.name || '', candidate).title === input.title);
+    if (!titleMatches) continue;
+    const itemArtist = normalizeArtistTitle(item?.artist?.name || '', item?.title || '').artist;
+    if (artistOverlapRatioLoose(input.artist, itemArtist) >= 0.5) return String(item.id);
+  }
+  return null;
 }

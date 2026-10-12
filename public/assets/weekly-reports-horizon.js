@@ -9,7 +9,9 @@ import {
   formatNumber,
   AppShell,
   PanelCard,
-  useUiColors
+  useUiColors,
+  PlayButton,
+  LoadingSpinner
 } from './horizon-lib.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -106,7 +108,12 @@ function TopTracksTable({ tracks }) {
               onClick=${() => { window.location.href = `/dashboard?trackKey=${encodeURIComponent(row.track_key)}`; }}
             >
               <${Chakra.Td} color=${ui.textMuted} fontSize="xs">${index + 1}<//>
-              <${Chakra.Td} fontWeight="600">${row.artist}<//>
+              <${Chakra.Td} fontWeight="600">
+                <${Chakra.HStack} spacing="3">
+                  <${PlayButton} track=${{ trackKey: row.track_key, artist: row.artist, title: row.title }} size="xs" />
+                  <span>${row.artist}</span>
+                <//>
+              <//>
               <${Chakra.Td} color=${ui.textMuted}>${row.title}<//>
               <${Chakra.Td} isNumeric fontWeight="700">${formatNumber(row.plays)}<//>
               <${Chakra.Td} isNumeric>
@@ -183,7 +190,7 @@ function StationReportPanel({ stationId, weekStart, stations }) {
     return html`<${Chakra.Text} color=${ui.textMuted} fontSize="sm">Bitte einen Sender auswählen.<//>`;
   }
   if (loading) {
-    return html`<${Chakra.Spinner} size="sm" />`;
+    return html`<${LoadingSpinner} label="Lade Senderbericht…" />`;
   }
   if (error) {
     return html`
@@ -409,13 +416,13 @@ function WeeklyReportsApp() {
               <${Chakra.SimpleGrid} columns=${{ base: 1, xl: 2 }} spacing="4">
                 <${PanelCard} title="Top 50 Titel" subtitle="Meistgespielt diese Woche, alle Sender zusammen">
                   ${loading
-                    ? html`<${Chakra.Spinner} size="sm" />`
+                    ? html`<${LoadingSpinner} label="Lade Top-Titel…" />`
                     : html`<${TopTracksTable} tracks=${overview?.topTracks} />`}
                 <//>
 
                 <${PanelCard} title="Plays je Sender" subtitle="Vergleich mit Vorwoche">
                   ${loading
-                    ? html`<${Chakra.Spinner} size="sm" />`
+                    ? html`<${LoadingSpinner} label="Lade Sender…" />`
                     : html`<${StationTotalsTable} stationTotals=${overview?.stationTotals} stations=${stations} />`}
                 <//>
               <//>

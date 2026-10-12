@@ -33,8 +33,9 @@ function dbQueries(db) {
   return queryApi;
 }
 
-export function openDb(dbPath) {
-  const db = new Database(dbPath);
+// Ingest and maintenance jobs run in parallel child processes, so writers may have to wait for each other.
+export function openDb(dbPath, { busyTimeoutMs = 20000 } = {}) {
+  const db = new Database(dbPath, { timeout: busyTimeoutMs });
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
@@ -42,8 +43,22 @@ export function openDb(dbPath) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   db.exec(schema);
   ensureTrackMetadataColumns(db);
+  ensureStationColumns(db);
 
   return db;
+}
+
+function ensureStationColumns(db) {
+  const existing = new Set(db.prepare("select name from pragma_table_info('stations')").all().map((row) => row.name));
+  const required = {
+    config_json: 'text',
+    enabled: 'integer not null default 1',
+    created_at_utc: 'text',
+    updated_at_utc: 'text'
+  };
+  for (const [name, type] of Object.entries(required)) {
+    if (!existing.has(name)) db.exec(`alter table stations add column ${name} ${type}`);
+  }
 }
 
 function ensureTrackMetadataColumns(db) {
@@ -520,7 +535,8 @@ const LIST_TRACKS_SELECT = `
   min(m.release_date_utc) as release_date_utc,
   min(m.verification_confidence) as verification_confidence,
   min(m.external_url) as external_url,
-  min(m.preview_url) as preview_url`.trim();
+  min(m.preview_url) as preview_url,
+  min(m.artwork_url) as artwork_url`.trim();
 
 export function listTracks(db, { query = '', stationId, limit = 100, includeTrackKey } = {}) {
   const q = dbQueries(db);
@@ -661,7 +677,8 @@ export function listNewTitles(
       min(m.release_date_utc) as release_date_utc,
       min(m.verification_confidence) as release_confidence,
       min(m.external_url) as external_url,
-      min(m.preview_url) as preview_url
+      min(m.preview_url) as preview_url,
+      min(m.artwork_url) as artwork_url
     from plays p
     left join stations s on s.id = p.station_id
     left join track_metadata m on m.track_key = p.track_key

@@ -305,3 +305,23 @@ stations:
     parser: "radiomenu"
     fetcher: "http"
     timezone: "Europe/London"
+
+  - id: "radiovelbert"
+    name: "RadioVelbert"
+    # laut.fm only keeps the last 10 songs, so laut.fm stations are fetched every 5 minutes.
+    playlist_url: "https://api.laut.fm/station/radiovelbert/last_songs"
+    parser: "lautfm_json"
+    fetcher: "http"
+    timezone: "Europe/Berlin"
+
+  - id: "radio_neandertal"
+    name: "Radio Neandertal"
+    # Time-window API: {from}/{to} are filled per run (default 3h window, catches up after downtime).
+    playlist_url: "https://www.radioneandertal.de/playlist/title?station=live&req_station=29&datefrom={from:yyyy-MM-dd HH:mm:ss}&dateto={to:yyyy-MM-dd HH:mm:ss}&pagesize=1000"
+    fallback_urls:
+      - "https://api-prod.nrwlokalradios.com/playlist/latest?station=29&req_station=29&count=500"
+    parser: "json"
+    json:
+      time_path: "timeslot_iso"
+    fetcher: "http"
+    timezone: "Europe/Berlin"

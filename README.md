@@ -1,4 +1,4 @@
-# Music Scraper
+# RadioVelbert Music Scraper
 
 **Radio-Analyse-Tool für Sender, die wissen wollen, was gerade läuft.**
 
@@ -19,6 +19,8 @@ Music Scraper sammelt Playlisten von Radiosendern automatisch ein, normalisiert 
 | **Mein Sender** | Vergleich deines eigenen Senders mit dem gesamten Markt |
 | **Neue Titel** | Welche Songs sind diese Woche neu ins Radio gekommen? |
 | **Wochenberichte** | Automatisch generierte Berichte mit Top-Tracks und Bewegungen |
+| **Song-Seite** | Cover, Album, Label, ISRC, Erscheinungsdatum, Mitwirkende und Links (Deezer, Spotify, Apple Music, YouTube …) |
+| **Administration** | Sender im Browser verwalten, Abrufe und Jobs überwachen, Datenbankgröße und Wachstum, Daten löschen |
 
 ---
 
@@ -26,7 +28,7 @@ Music Scraper sammelt Playlisten von Radiosendern automatisch ein, normalisiert 
 
 ### Dashboard — Track-Katalog
 
-Durchsuchbare, sortierbare Liste aller Tracks mit Plays, Plays/Tag und Last-Seen. Die Kennzahlen (Gefundene Titel, Einsätze, Künstler) stehen direkt über der Tabelle. Per Klick auf „Öffnen" gelangt man zur Song-Detail-Seite. Winner/Loser-Buttons für schnelles Track-Merging direkt in der Tabelle.
+Durchsuchbare, sortierbare Liste aller Tracks in normaler Schreibweise, mit Cover, Plays, Plays/Tag und letztem Einsatz. Ein Klick auf die Zeile öffnet die Song-Seite, der Play-Button spielt ein 30-Sekunden-Hörbeispiel im Player am unteren Fensterrand. Winner/Loser-Buttons für schnelles Track-Merging direkt in der Tabelle.
 
 ![Dashboard Light](docs/screenshots/dashboard.png)
 
@@ -36,7 +38,7 @@ Durchsuchbare, sortierbare Liste aller Tracks mit Plays, Plays/Tag und Last-Seen
 
 ### Song-Detail — Performance & Analyse
 
-Jeder Track hat eine eigene Seite mit Score (0–100), Momentum, Sender-Breite und allen Plays-Metriken.
+Jeder Track hat eine eigene Seite: Cover, Album, Label, Genre, Dauer, ISRC (kopierbar), Erscheinungsdatum und Mitwirkende von Deezer, Links zu Deezer, Spotify, Apple Music, YouTube, Genius und MusicBrainz. Darunter: bei welchen Sendern der Titel läuft, die letzten Einsätze, Infos zum Künstler, die Schreibweisen der Sender sowie Score (0–100), Momentum und Sender-Breite.
 
 ![Song-Detail Light](docs/screenshots/track-detail.png)
 
@@ -74,6 +76,16 @@ Automatisch generierte Übersichten mit Top-Tracks, Neueinsteigern, Absteigern u
 
 ---
 
+### Administration
+
+Sender im Browser anlegen und bearbeiten (onlineradiobox-Suche, laut.fm, beliebige JSON-APIs, HTML-Parser), Quelle vorab testen, Abruf-Intervalle überschreiben. Die Übersicht zeigt, wann welcher Sender zuletzt ausgelesen wurde, was dabei herauskam, welche Jobs laufen, wie groß die Datenbank ist und wie schnell sie wächst.
+
+![Administration](docs/screenshots/admin.png)
+
+![Sender hinzufügen](docs/screenshots/admin-station.png)
+
+---
+
 ## Schnellstart
 
 ### Voraussetzungen
@@ -96,13 +108,7 @@ npm install
 
 ### Konfiguration
 
-Kopiere die Beispielkonfiguration und passe sie an:
-
-```bash
-cp config.yaml.example config.yaml
-```
-
-Mindestens einen Sender in `config.yaml` eintragen — siehe [Sender hinzufügen](docs/add-station.md).
+Sender werden im Browser unter **Administration → Sender** verwaltet. `config.yaml` enthält die Startliste, die beim ersten Start in eine leere Datenbank übernommen wird – siehe [Sender hinzufügen](docs/add-station.md).
 
 Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 
@@ -113,6 +119,7 @@ Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 | `YRPA_VERIFY_ALL_TRACKS` | Alle Tracks gegen iTunes/Spotify prüfen (statt nur verdächtige) | `0` |
 | `YRPA_TRACK_VERIFY` | Track-Verifikation aktivieren (`0` = aus) | `1` |
 | `YRPA_DEDUP_COOLDOWN_SECONDS` | Cooldown-Fenster für Dedup in Sekunden | `900` |
+| `YRPA_TRACK_HOUR_START` / `YRPA_TRACK_HOUR_END` | Startwert für das Erfassungsfenster (danach in der Administration einstellbar) | `6` / `20` |
 | `LOG_LEVEL` | Pino Log-Level (`info`, `debug`, …) | `info` |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Login für Dashboard und API (beide gesetzt = aktiv; `/api/health` bleibt offen) | — |
 | `DB_PATH` | Standard für `--db` | `music-scraper.sqlite` (`api`: `yrpa.sqlite`) |
@@ -136,9 +143,10 @@ Der Server startet auf Port `8787`. Direkt danach werden im Hintergrund die Play
 | Neue Titel | `/new-titles` |
 | Mein Sender | `/my-station` |
 | Wochenberichte | `/weekly-reports` |
+| Administration | `/admin` |
 | API Docs | `/api/docs` |
 
-> Der interne Scheduler läuft automatisch (stündlich Ingest + Wartung + Auswertung, täglich 04:20 Coverage-Audit + Wochenreport) — kein externer Cronjob nötig.
+> Der interne Scheduler läuft automatisch: Jede Minute werden fällige Sender abgerufen (Standard stündlich, laut.fm alle 5 Minuten, pro Sender überschreibbar), stündlich Wartung + Tagesauswertung, täglich 04:20 Coverage-Audit + Wochenreport. Kein externer Cronjob nötig.
 
 ---
 
@@ -177,7 +185,7 @@ Startet den Express-Server. Ingest, Wartung und Auswertung laufen nach dem Start
 node src/cli.js ingest --config config.yaml --db music-scraper.sqlite
 ```
 
-Ruft alle konfigurierten Sender ab und schreibt neue Plays in die Datenbank.
+Ruft alle aktiven Sender ab und schreibt neue Plays in die Datenbank. Mit `--stations id1,id2` nur bestimmte Sender (auch deaktivierte). `--config` wird nur gebraucht, um eine leere Datenbank mit Sendern zu füllen.
 
 ---
 
@@ -193,6 +201,7 @@ Führt Ingest, Wartung, Tagesauswertung und optional Wochenbericht in einem Schr
 |---|---|
 | `--make-report` | Wochenbericht für die aktuelle Woche erstellen |
 | `--audit-coverage` | Coverage-Audit für gestern durchführen |
+| `--skip-ingest` | Ohne Abruf (der Server-Scheduler ruft Sender selbst ab) |
 
 ---
 
@@ -202,7 +211,7 @@ Führt Ingest, Wartung, Tagesauswertung und optional Wochenbericht in einem Schr
 node src/cli.js maintain-db --db music-scraper.sqlite [--dry-run]
 ```
 
-Führt alle Wartungsroutinen aus: Noise-Bereinigung, Duplikat-Merge, Canonical-Map-Refresh, Orientierungs-Korrektur (Artist/Title-Dreher), Release-Datum-Backfill.
+Führt alle Wartungsroutinen aus: Noise-Bereinigung, Duplikat-Merge, Canonical-Map-Refresh, Orientierungs-Korrektur (Artist/Title-Dreher), Release-Datum-Backfill, Anzeige-Schreibweisen.
 
 | Option | Beschreibung | Standard |
 |---|---|---|
@@ -251,6 +260,17 @@ node src/cli.js cleanup-station --station-id dlf_nova --db music-scraper.sqlite 
 
 ---
 
+### `clear-db` — Gesammelte Daten löschen
+
+```bash
+node src/cli.js clear-db --db music-scraper.sqlite --scope all --yes
+node src/cli.js clear-db --db music-scraper.sqlite --scope station --station-id dlf_nova --yes
+```
+
+Löscht Plays, Statistiken und Metadaten (alles oder nur einen Sender) und gibt den Speicher frei. Senderkonfiguration, Einstellungen, gesperrte Tracks und Job-Verlauf bleiben. Im Browser: **Administration → Datenbank**.
+
+---
+
 ## Datenqualität & Normalisierung
 
 Die Kernkomponente `src/normalize.js` bereinigt Rohdaten aus verschiedenen Quellen in ein einheitliches Format. Folgende Probleme werden automatisch behandelt:
@@ -275,11 +295,17 @@ Die Kernkomponente `src/normalize.js` bereinigt Rohdaten aus verschiedenen Quell
 
 Der `canonicalTrackKey` (SHA-1-Hash aus normalisiertem Artist + Title) ist die stabile Identität eines Tracks in der Datenbank — unabhängig davon, wie verschiedene Sender denselben Song benennen.
 
+**Anzeige-Schreibweise:** Die Identität ist kleingeschrieben, angezeigt wird die echte Schreibweise (`track_display`). Sie stammt aus Deezer oder aus der Sender-Schreibweise mit Groß-/Kleinschreibung; reine GROSSBUCHSTABEN-Quellen (z. B. NRW Lokalradios) werden in normale Schreibweise umgewandelt (`MEN AT WORK` → `Men at Work`, `huntr-x` → `HUNTR/X`).
+
 ---
 
 ## Deezer-Integration
 
-Jeder neu ingested Track wird gegen die **öffentliche Deezer-API** abgeglichen (kein API-Key nötig). Bei einem sicheren Treffer (Confidence ≥ 0.8) wird die saubere Deezer-Schreibweise als kanonische Identität übernommen.
+Jeder neu ingested Track wird gegen die **öffentliche Deezer-API** abgeglichen (kein API-Key nötig). Bei einem sicheren Treffer (Confidence ≥ 0.8) wird die saubere Deezer-Schreibweise als kanonische Identität übernommen, inklusive ISRC und Cover.
+
+Die Song-Seite lädt zusätzlich Track-, Album- und Künstlerdaten (Mitwirkende, Label, Genres, BPM, Fans) und cacht sie 7 Tage. Hörbeispiele im Player kommen frisch von Deezer (die Links laufen nach ca. 15 Minuten ab), sonst von iTunes.
+
+> Der `artist:`-Filter der Deezer-Suche liefert seit Oktober 2026 keine Treffer mehr. Gesucht wird deshalb mit der einfachen Suche und `track:"…"` als Rückfall – mit denselben strengen Match-Regeln.
 
 - **Throttling**: max. 45 Requests / 5 Sekunden (unter dem öffentlichen Limit von 50/5s)
 - **Caching**: geprüfte Tracks werden 6 Stunden lang nicht erneut abgefragt
@@ -301,7 +327,12 @@ Die Confidence-Gewichtung: Titel 45 %, Primary-Artist 25 %, Artist-Overlap 20 %,
 | `daily_overall_track_stats` | Tagesaggregat pro Track über alle Sender |
 | `daily_station_stats` | Tagesaggregat pro Sender (Plays, Unique Tracks) |
 | `blocked_tracks` | Dauerhaft gesperrte Tracks (werden beim Ingest übersprungen) |
-| `stations` | Senderliste mit Name, URL, Timezone |
+| `stations` | Sender inkl. Konfiguration (`config_json`) und Aktiv-Status |
+| `station_status` | Letzter Abruf je Sender: Zeitpunkt, Ergebnis, Fehler, gefundene/neue Plays |
+| `track_display` | Anzeige-Schreibweise je Track |
+| `track_enrichment` | Deezer-Details für die Song-Seite (Cache) |
+| `job_runs` | Verlauf aller Hintergrund-Jobs |
+| `app_settings` | Einstellungen aus der Administration |
 
 ---
 
@@ -317,14 +348,14 @@ Die Confidence-Gewichtung: Titel 45 %, Primary-Artist 25 %, Artist-Overlap 20 %,
 
 | Schicht | Stack |
 |---|---|
-| **Runtime** | Node.js 20, ES Modules |
+| **Runtime** | Node.js 22 (≥ 20), ES Modules |
 | **Web-Framework** | Express 4 |
 | **Datenbank** | SQLite via better-sqlite3 |
-| **Frontend** | Vanilla JS, React (CDN), Chakra UI |
+| **Frontend** | React (CDN, ohne Build-Schritt), Chakra UI, RadioVelbert-Design (Inter, Cyan/Navy) |
 | **HTTP-Fetcher** | undici, Playwright (für JS-gerenderte Seiten) |
 | **HTML-Parsing** | cheerio |
 | **Logging** | pino |
-| **Tests** | Vitest (98 Tests, alle grün) |
+| **Tests** | Vitest |
 | **Externe APIs** | Deezer (öffentlich, kein Key), Spotify (optional), iTunes Search |
 
 ### Unterstützte Parser
@@ -334,7 +365,8 @@ Die Confidence-Gewichtung: Titel 45 %, Primary-Artist 25 %, Artist-Overlap 20 %,
 | `onlineradiobox` | Die meisten DE/AT/UK-Sender über onlineradiobox.com |
 | `dlf_nova` | Deutschlandfunk Nova |
 | `nrwlokalradios_json` | NRW Lokalradios (JSON-API) |
-| `lautfm_json` | laut.fm-Sender |
+| `lautfm_json` | laut.fm-Sender (Abruf alle 5 Minuten) |
+| `json` | Beliebige JSON-API mit Feld-Mapping und Zeitfenster-Platzhaltern |
 | `radiomenu` | radio.menu-Sender (z.B. Capital FM) |
 | `generic_html` | Generisches HTML-Parsing |
 | `generic_html_or_onlineradiobox` | Automatische Erkennung |

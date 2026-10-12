@@ -43,15 +43,16 @@ Music Scraper läuft in Coolify als **ein** Docker-Compose-Service. Das Repo bri
 
 ### Automatische Jobs
 
-Alle Jobs laufen im Container, nacheinander (nie parallel, weil sie dieselbe SQLite-Datei schreiben). Zeiten in Europe/Berlin.
+Alle Jobs laufen im Container in drei parallelen Spuren: **Abrufe** (stündliche Sender), **Schnellabrufe** (Intervall ≤ 15 min wie laut.fm, manuelle Einzelabrufe) und **Wartung**. Innerhalb einer Spur laufen Jobs nacheinander. So wartet der 5-Minuten-Abruf von laut.fm weder auf eine lange Wartung noch auf einen großen Abruf-Stapel. Zeiten in Europe/Berlin.
 
 | Wann | Was |
 |---|---|
-| Nach jedem Start/Deploy | `daily-job`: Ingest, komplette Wartung, Auswertung von gestern, Coverage-Audit, Wochenreport |
-| Stündlich zur vollen Stunde | Ingest, `maintain-db`, Auswertung von gestern |
+| Jede Minute | Fällige Sender abrufen – Standard alle 60 min, laut.fm alle 5 min, pro Sender überschreibbar |
+| Nach jedem Start/Deploy | Alle Sender abrufen; parallel komplette Wartung, Auswertung, Coverage-Audit, Wochenreport |
+| Stündlich zur vollen Stunde | `maintain-db`, Tagesauswertung für gestern und heute |
 | Täglich 04:20 | Coverage-Audit für gestern, Wochenreport (Markdown + CSV) |
 
-Externe Cronjobs oder GitHub Actions werden nicht mehr gebraucht.
+Status, Verlauf und manuelle Starts: **Administration → Jobs**. Externe Cronjobs oder GitHub Actions werden nicht gebraucht.
 
 ### Daten
 
@@ -66,7 +67,9 @@ Das Volume bleibt bei Redeploys erhalten. **Nicht** unter *Persistent Storage* l
 
 ### Sender ändern
 
-`config.yaml` im Repo bearbeiten, committen, pushen. Coolify deployt neu (bei aktiviertem Auto-Deploy automatisch) und übernimmt die Sender beim Start.
+Im Browser unter **Administration → Sender**: anlegen, testen, bearbeiten, pausieren, löschen. Das gilt sofort, ohne Deployment. Siehe [Sender hinzufügen](add-station.md).
+
+`config.yaml` wird nur beim allerersten Start in eine leere Datenbank übernommen. Später ergänzte Einträge lassen sich über **Sender → config.yaml importieren** nachziehen.
 
 ### CLI-Befehle im Container
 
@@ -108,7 +111,7 @@ Wenn lokal schon eine Datenbank mit Historie existiert (`yrpa.sqlite` oder `musi
 
 ## Backup
 
-Coolify sichert nur seine eigenen Datenbank-Resources automatisch, **nicht** dieses Volume. Konsistentes Backup im laufenden Betrieb:
+Coolify sichert nur seine eigenen Datenbank-Resources automatisch, **nicht** dieses Volume. Die aktuelle Größe und das erwartete Wachstum zeigt **Administration → Datenbank**. Konsistentes Backup im laufenden Betrieb:
 
 ```bash
 docker exec <CONTAINER> gosu node node -e "require('better-sqlite3')(process.env.DB_PATH).backup('/data/backup.sqlite').then(() => console.log('ok'))"
@@ -129,6 +132,7 @@ Den Container-Namen zeigt `docker ps | grep app-`. Den Befehl kann man als Cronj
 | `YRPA_VERIFY_ALL_TRACKS` | Alle Tracks gegen iTunes/Spotify prüfen | `1` |
 | `YRPA_TRACK_VERIFY` | Track-Verifikation (`0` = aus) | `1` |
 | `YRPA_DEDUP_COOLDOWN_SECONDS` | Dedup-Fenster in Sekunden | `900` |
+| `YRPA_TRACK_HOUR_START` / `_END` | Startwert Erfassungsfenster (danach in der Administration) | `6` / `20` |
 | `LOG_LEVEL` | `info`, `debug`, … | `info` |
 | `DB_PATH` | SQLite-Datei | `/data/music-scraper.sqlite` |
 | `REPORTS_DIR` | Ausgabeordner für Reports | `/data/reports` |

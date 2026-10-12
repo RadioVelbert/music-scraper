@@ -117,3 +117,62 @@ create table if not exists canonical_map(
 
 create index if not exists idx_canonical_map_title_primary
   on canonical_map(canonical_title, canonical_primary_artist);
+
+-- Scrape status per station (written by every ingest run, shown in the admin area)
+create table if not exists station_status(
+  station_id text primary key,
+  last_started_at_utc text,
+  last_finished_at_utc text,
+  last_success_at_utc text,
+  last_status text,
+  last_error text,
+  last_source_url text,
+  last_plays_found integer,
+  last_plays_inserted integer,
+  last_duration_ms integer,
+  consecutive_failures integer not null default 0,
+  total_runs integer not null default 0,
+  total_inserted integer not null default 0
+);
+
+-- Display spelling per track (plays.artist/title are normalized lowercase identities)
+create table if not exists track_display(
+  track_key text primary key,
+  artist_norm text not null,
+  title_norm text not null,
+  artist text not null,
+  title text not null,
+  source text not null,
+  updated_at_utc text not null
+);
+
+create index if not exists idx_track_display_artist_norm on track_display(artist_norm);
+
+-- Cached Deezer details (track, album, artist, contributors) for the song page
+create table if not exists track_enrichment(
+  track_key text primary key,
+  source text not null,
+  source_id text,
+  payload_json text,
+  fetched_at_utc text not null
+);
+
+create table if not exists job_runs(
+  id integer primary key autoincrement,
+  name text not null,
+  label text,
+  trigger text,
+  status text not null,
+  detail_json text,
+  error text,
+  queued_at_utc text,
+  started_at_utc text,
+  finished_at_utc text,
+  duration_ms integer
+);
+
+create table if not exists app_settings(
+  key text primary key,
+  value_json text not null,
+  updated_at_utc text not null
+);

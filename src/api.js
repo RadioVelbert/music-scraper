@@ -1,6 +1,5 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { createRequire } from 'node:module';
@@ -21,7 +20,11 @@ import {
 import { BERLIN_TZ, buildWeekRanges } from './time.js';
 import { buildTrackSeries, buildTrackSeriesByStation, buildTrackTotals } from './trends.js';
 import { runDailyEvaluation, runManualTrackMerge, deleteAndBlockTrack } from './services.js';
-import { loadConfig } from './config.js';
+import { listStationConfigs, getStationConfig, importStationsFromConfig } from './stationStore.js';
+import { applyDisplayNames } from './displayNames.js';
+import { getTrackDetails, getTrackPreview } from './trackDetails.js';
+import { createJobRunner, createJobCatalog, initScheduler } from './jobs.js';
+import { registerAdminRoutes } from './adminApi.js';
 import { buildStationAnalytics } from './analytics.js';
 import { TrackVerifier } from './trackVerifier.js';
 
@@ -166,9 +169,15 @@ function computeTrackTrend(db, trackKey, nowBerlin = DateTime.now().setZone(BERL
 }
 
 export function createApiHandlers({ configPath, dbPath, logger }) {
-  const sharedDb = openDb(dbPath);
+  // Short busy timeout: a write blocked by a running job must not stall the API event loop for long.
+  const sharedDb = openDb(dbPath, { busyTimeoutMs: 3000 });
   ACTIVE_API_DBS.add(sharedDb);
   registerApiDbHooks(logger);
+  try {
+    importStationsFromConfig(sharedDb, configPath, { onlyIfEmpty: true });
+  } catch (error) {
+    logger?.warn?.({ err: error instanceof Error ? error.message : String(error) }, 'station seed from config failed');
+  }
 
   const closeSharedDb = () => {
     if (!ACTIVE_API_DBS.has(sharedDb)) return;
@@ -182,6 +191,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
 
   return {
     __close: closeSharedDb,
+    __db: sharedDb,
     health: (_req, res) => {
       res.json({ ok: true, time: new Date().toISOString() });
     },
@@ -189,7 +199,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     docs: (_req, res) => {
       res.json({
         name: 'Music Scraper API',
-        pages: ['GET /dashboard', 'GET /tracks', 'GET /new-titles', 'GET /my-station'],
+        pages: ['GET /dashboard', 'GET /new-titles', 'GET /weekly-reports', 'GET /my-station', 'GET /admin'],
         endpoints: [
           'GET /api/health',
           'GET /api/docs',
@@ -197,6 +207,8 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
           'GET /api/tracks?limit=100&q=QUERY&stationId=ID&includeTrackKey=TRACK_KEY',
           'GET /api/new-titles?from=YYYY-MM-DD&to=YYYY-MM-DD&station=ID&limit=250&minPlays=1&q=QUERY&requireReleaseDate=1&maxReleaseAgeDays=730&minReleaseConfidence=0.55',
           'GET /api/tracks/search?q=QUERY&limit=30',
+          'GET /api/tracks/:trackKey/details?refresh=1  (Deezer: artwork, ISRC, release, contributors, links; plays per station)',
+          'GET /api/tracks/:trackKey/preview  (fresh 30s preview URL, Deezer or iTunes)',
           'GET /api/tracks/:trackKey/series?bucket=day|week|month|year&from=YYYY-MM-DD&to=YYYY-MM-DD',
           'GET /api/tracks/:trackKey/series-by-station?bucket=day|week|month|year&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=10',
           'GET /api/panel/active-senders?from=YYYY-MM-DD&to=YYYY-MM-DD&minPlays=50',
@@ -218,7 +230,14 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
           'POST /api/jobs/evaluate-daily {"date":"YYYY-MM-DD"}',
           'GET /api/my-station/overview?days=7',
           'GET /api/my-station/missed?days=7&minOtherPlays=3&minOtherStations=2&limit=100',
-          'GET /api/my-station/exclusives?days=7&maxOtherStations=1&limit=100'
+          'GET /api/my-station/exclusives?days=7&maxOtherStations=1&limit=100',
+          'GET /api/admin/overview  (DB size and growth, station status, jobs, schedules)',
+          'GET|POST /api/admin/stations, PUT|DELETE /api/admin/stations/:id (?deleteData=1), PATCH /api/admin/stations/:id/enabled',
+          'POST /api/admin/stations/test {station config}  (fetch + parse preview, nothing is stored)',
+          'POST /api/admin/stations/:id/run, POST /api/admin/stations/import-config',
+          'GET /api/admin/sources/onlineradiobox?q=QUERY, GET /api/admin/sources/lautfm/:name',
+          'GET|PUT /api/admin/settings, GET /api/admin/jobs, POST /api/admin/jobs/:type/run (ingest-all|maintenance|daily|deezer-backfill)',
+          'POST /api/admin/db/clear {"scope":"all"|"station","stationId":"...","confirm":"LÖSCHEN"}'
         ]
       });
     },
@@ -868,6 +887,29 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
       }
     },
 
+    trackDetails: async (req, res) => {
+      try {
+        const refresh = String(safeQueryValue(req.query?.refresh) ?? '') === '1';
+        const details = await getTrackDetails(sharedDb, req.params.trackKey, { refresh, logger });
+        if (!details) return res.status(404).json({ error: 'Unknown trackKey' });
+        // Already contains display spellings; Deezer payload fields must not be rewritten.
+        res.locals.skipDisplayNames = true;
+        return res.json(details);
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    trackPreview: async (req, res) => {
+      try {
+        const preview = await getTrackPreview(sharedDb, req.params.trackKey, { logger });
+        if (!preview) return res.status(404).json({ error: 'Kein Hörbeispiel gefunden' });
+        return res.json(preview);
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
     adminMergeTracks: (req, res) => {
       try {
         const winnerTrackKey = String(req.body?.winnerTrackKey || '').trim();
@@ -1087,8 +1129,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
           ? String(safeQueryValue(req.query.weekStart))
           : DateTime.now().setZone(BERLIN_TZ).startOf('week').toISODate();
         const ranges = buildWeekRanges(weekStart);
-        const config = loadConfig(configPath);
-        const station = config.stations.find((s) => s.id === stationId);
+        const station = getStationConfig(sharedDb, stationId);
         if (!station) return res.status(404).json({ error: 'Unknown stationId' });
 
         const db = sharedDb;
@@ -1154,7 +1195,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     myStationMissed: (req, res) => {
       try {
         const query = normalizeQuery(req.query);
-        const config = loadConfig(configPath);
+        const config = { stations: listStationConfigs(sharedDb, { includeDisabled: true }) };
         const stationIdParam = query.stationId ? String(query.stationId).trim() : null;
         const myStation = stationIdParam
           ? config.stations.find((s) => s.id === stationIdParam)
@@ -1223,7 +1264,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     myStationExclusives: (req, res) => {
       try {
         const query = normalizeQuery(req.query);
-        const config = loadConfig(configPath);
+        const config = { stations: listStationConfigs(sharedDb, { includeDisabled: true }) };
         const stationIdParam = query.stationId ? String(query.stationId).trim() : null;
         const myStation = stationIdParam
           ? config.stations.find((s) => s.id === stationIdParam)
@@ -1301,7 +1342,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     myStationOverview: (req, res) => {
       try {
         const query = normalizeQuery(req.query);
-        const config = loadConfig(configPath);
+        const config = { stations: listStationConfigs(sharedDb, { includeDisabled: true }) };
         const stationIdParam = query.stationId ? String(query.stationId).trim() : null;
         const myStation = stationIdParam
           ? config.stations.find((s) => s.id === stationIdParam)
@@ -1396,7 +1437,26 @@ function createBasicAuthMiddleware({ user, password, realm = 'Music Scraper' }) 
   };
 }
 
-export function createApiApp({ configPath, dbPath, logger }) {
+// Replaces normalized artist/title in JSON responses of GET /api/* with the display spelling.
+function createDisplayNameMiddleware(db, logger) {
+  return (req, res, next) => {
+    if (req.method !== 'GET') return next();
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (!res.locals.skipDisplayNames && res.statusCode < 400 && body && typeof body === 'object') {
+        try {
+          applyDisplayNames(db, body);
+        } catch (error) {
+          logger.warn({ path: req.path, err: error instanceof Error ? error.message : String(error) }, 'display names failed');
+        }
+      }
+      return json(body);
+    };
+    return next();
+  };
+}
+
+export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog = null, scheduler = null }) {
   let express;
   try {
     express = require('express');
@@ -1412,11 +1472,12 @@ export function createApiApp({ configPath, dbPath, logger }) {
   } else {
     logger.warn('BASIC_AUTH_USER/BASIC_AUTH_PASSWORD not set: dashboard and admin endpoints are publicly accessible');
   }
-  app.use(express.json());
+  app.use(express.json({ limit: '256kb' }));
   app.use('/assets', express.static(path.join(PUBLIC_DIR, 'assets')));
 
   const handlers = createApiHandlers({ configPath, dbPath, logger });
   app.locals.closeApiDb = handlers.__close;
+  app.use('/api', createDisplayNameMiddleware(handlers.__db, logger));
 
   app.get('/', (_req, res) => res.redirect('/dashboard'));
   app.get('/dashboard', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html')));
@@ -1424,6 +1485,7 @@ export function createApiApp({ configPath, dbPath, logger }) {
   app.get('/new-titles', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'new-titles.html')));
   app.get('/weekly-reports', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'weekly-reports.html')));
   app.get('/my-station', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'my-station.html')));
+  app.get('/admin', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'admin.html')));
 
   app.get('/api/health', handlers.health);
   app.get('/api/docs', handlers.docs);
@@ -1431,6 +1493,8 @@ export function createApiApp({ configPath, dbPath, logger }) {
   app.get('/api/tracks', handlers.tracks);
   app.get('/api/new-titles', handlers.newTitles);
   app.get('/api/tracks/search', handlers.search);
+  app.get('/api/tracks/:trackKey/details', handlers.trackDetails);
+  app.get('/api/tracks/:trackKey/preview', handlers.trackPreview);
   app.get('/api/tracks/:trackKey/series', handlers.trackSeries);
   app.get('/api/tracks/:trackKey/series-by-station', handlers.trackSeriesByStation);
   app.get('/api/panel/active-senders', handlers.panelActiveSenders);
@@ -1454,6 +1518,7 @@ export function createApiApp({ configPath, dbPath, logger }) {
   app.get('/api/my-station/overview', handlers.myStationOverview);
   app.get('/api/my-station/missed', handlers.myStationMissed);
   app.get('/api/my-station/exclusives', handlers.myStationExclusives);
+  registerAdminRoutes(app, { db: handlers.__db, dbPath, configPath, logger, jobs, catalog, scheduler });
 
   return app;
 }
@@ -1468,118 +1533,22 @@ function listenOnPort(app, port, logger) {
   });
 }
 
-const HOURLY_CRON = '0 * * * *';
-const DAILY_CRON = '20 4 * * *';
 // Must stay below Docker's default stop timeout (10s) so we exit on our own instead of being SIGKILLed.
 const SHUTDOWN_TIMEOUT_MS = 8000;
 
-// Runs CLI commands as child processes so long ingest/maintenance runs never block the API event loop.
-// Jobs run strictly one after another because they all write to the same SQLite file; a job that is
-// already queued or running is not queued a second time.
-function createJobRunner({ logger }) {
-  const cliPath = path.resolve(__dirname, 'cli.js');
-  const queued = new Set();
-  let tail = Promise.resolve();
-  let activeChild = null;
-  let stopping = false;
-
-  const runCliCommand = (commandName, args, env) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, commandName, ...args], {
-      cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, ...env },
-      stdio: ['ignore', 'inherit', 'inherit']
-    });
-    activeChild = child;
-    child.once('error', (error) => {
-      activeChild = null;
-      reject(error);
-    });
-    child.once('exit', (code, signal) => {
-      activeChild = null;
-      if (code === 0) resolve();
-      else reject(new Error(`${commandName} exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
-    });
-  });
-
-  // buildSteps is evaluated when the job starts, so date arguments refer to the actual run time.
-  const enqueue = (name, buildSteps) => {
-    if (stopping) return;
-    if (queued.has(name)) {
-      logger.info({ job: name }, 'job skipped: already queued or running');
-      return;
-    }
-    queued.add(name);
-    tail = tail.then(async () => {
-      const startedAt = Date.now();
-      try {
-        if (stopping) return;
-        logger.info({ job: name }, 'job started');
-        for (const [commandName, args, env] of buildSteps()) {
-          if (stopping) return;
-          await runCliCommand(commandName, args, env);
-        }
-        logger.info({ job: name, durationMs: Date.now() - startedAt }, 'job finished');
-      } catch (error) {
-        logger.error({ job: name, err: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt }, 'job failed');
-      } finally {
-        queued.delete(name);
-      }
-    });
-  };
-
-  const stop = (timeoutMs) => {
-    stopping = true;
-    const child = activeChild;
-    if (!child) return Promise.resolve();
-    return new Promise((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      child.kill('SIGTERM');
-    });
-  };
-
-  return { enqueue, stop };
-}
-
-function initScheduler({ jobs, configPath, dbPath, logger }) {
-  const cron = require('node-cron');
-  const berlinYesterday = () => DateTime.now().setZone(BERLIN_TZ).minus({ days: 1 }).toISODate();
-  const berlinWeekStart = () => DateTime.now().setZone(BERLIN_TZ).startOf('week').toISODate();
-
-  const tasks = [
-    // Hourly: scrape, clean up, and refresh yesterday's daily stats (late plays still arrive after midnight).
-    cron.schedule(HOURLY_CRON, () => jobs.enqueue('hourly', () => [
-      ['ingest', ['--config', configPath, '--db', dbPath]],
-      ['maintain-db', ['--db', dbPath]],
-      ['evaluate-daily', ['--config', configPath, '--db', dbPath, '--date', berlinYesterday()]]
-    ]), { timezone: BERLIN_TZ }),
-    // Daily: coverage audit for yesterday and the weekly report files.
-    cron.schedule(DAILY_CRON, () => jobs.enqueue('daily', () => [
-      ['audit-coverage', ['--config', configPath, '--db', dbPath, '--date', berlinYesterday()]],
-      ['report', ['--config', configPath, '--db', dbPath, '--week-start', berlinWeekStart(), '--csv']]
-    ]), { timezone: BERLIN_TZ })
-  ];
-
-  logger.info({ hourly: HOURLY_CRON, daily: DAILY_CRON, timezone: BERLIN_TZ, dbPath }, 'scheduler initialised');
-  return tasks;
-}
-
-function registerGracefulShutdown({ server, jobs, cronTasks, logger }) {
+function registerGracefulShutdown({ server, jobs, scheduler, logger }) {
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
     setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS).unref();
-    for (const task of cronTasks) task.stop();
+    scheduler.stop();
     await Promise.all([
       jobs.stop(SHUTDOWN_TIMEOUT_MS - 1000),
       new Promise((resolve) => server.close(() => resolve()))
     ]);
-    // process.exit triggers the 'exit' hook that closes the API database.
+    // process.exit triggers the 'exit' hook that closes the API databases.
     process.exit(0);
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
@@ -1588,9 +1557,17 @@ function registerGracefulShutdown({ server, jobs, cronTasks, logger }) {
 
 export async function startApiServer({ configPath, dbPath, port = 8787, startupJob = false }) {
   const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
-  // Fail fast on a missing or invalid config instead of on the first request or job.
-  loadConfig(configPath);
-  const app = createApiApp({ configPath, dbPath, logger });
+  // Control-plane connection for scheduler and job history. Seeds the station table from config.yaml
+  // on an empty database (fails fast on a broken config).
+  const controlDb = openDb(dbPath, { busyTimeoutMs: 3000 });
+  ACTIVE_API_DBS.add(controlDb);
+  registerApiDbHooks(logger);
+  importStationsFromConfig(controlDb, configPath, { onlyIfEmpty: true });
+
+  const jobs = createJobRunner({ db: controlDb, logger });
+  const catalog = createJobCatalog({ jobs, configPath, dbPath });
+  const scheduler = initScheduler({ jobs, catalog, db: controlDb, logger });
+  const app = createApiApp({ configPath, dbPath, logger, jobs, catalog, scheduler });
 
   let server;
   let selectedPort = Number(port) || 8787;
@@ -1611,16 +1588,13 @@ export async function startApiServer({ configPath, dbPath, port = 8787, startupJ
     throw new Error(`Could not start API server: no free port found from ${port} to ${selectedPort}`);
   }
 
-  const jobs = createJobRunner({ logger });
-  const cronTasks = initScheduler({ jobs, configPath, dbPath, logger });
-  registerGracefulShutdown({ server, jobs, cronTasks, logger });
+  registerGracefulShutdown({ server, jobs, scheduler, logger });
 
   if (startupJob) {
-    jobs.enqueue('startup', () => [
-      ['daily-job', ['--config', configPath, '--db', dbPath, '--make-report', '--audit-coverage'], {
-        YRPA_RELEASE_BACKFILL_DAILY_LOOKUPS: process.env.YRPA_RELEASE_BACKFILL_STARTUP_LOOKUPS || '260'
-      }]
-    ]);
+    // All stations are due after a restart, so the due check fetches them right away;
+    // maintenance and reports run in parallel in the maintenance lane.
+    scheduler.checkDueStations();
+    catalog.startup();
   }
 
   return server;

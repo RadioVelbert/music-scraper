@@ -18,7 +18,9 @@ import {
   runPromoMarkerMaintenance,
   runReleaseDateBackfillMaintenance,
   runAllMaintenance,
-  runBackfillDeezer
+  runBackfillDeezer,
+  runDisplayNamesMaintenance,
+  clearDatabase
 } from './services.js';
 import { openDb, dedupeStationToOnePlayPerMinute, dedupeStationByMinGapSeconds } from './db.js';
 
@@ -31,12 +33,18 @@ const DEFAULT_CONFIG_PATH = process.env.CONFIG_PATH || undefined;
 const program = new Command();
 program.name('music-scraper').description('Music Scraper').version('1.0.0');
 
+function parseStationIds(value) {
+  const ids = String(value ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  return ids.length ? ids : null;
+}
+
 program
   .command('ingest')
-  .requiredOption('--config <path>', 'Path to config.yaml', DEFAULT_CONFIG_PATH)
+  .requiredOption('--config <path>', 'Path to config.yaml (only used to seed an empty database)', DEFAULT_CONFIG_PATH)
   .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('--stations <ids>', 'Comma-separated station ids (default: all enabled stations)')
   .action((opts) => {
-    runIngest({ configPath: opts.config, dbPath: opts.db, logger }).catch((err) => {
+    runIngest({ configPath: opts.config, dbPath: opts.db, stationIds: parseStationIds(opts.stations), logger }).catch((err) => {
       logger.error({ err: err.message }, 'ingest failed');
       process.exitCode = 1;
     });
@@ -186,6 +194,7 @@ program
         includeChart: false,
         logger
       });
+      if (!Boolean(opts.dryRun)) runDisplayNamesMaintenance({ dbPath: opts.db, logger });
       logger.info(result, 'database maintenance finished');
     } catch (err) {
       logger.error({ err: err.message }, 'database maintenance failed');
@@ -199,8 +208,9 @@ program
   .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
   .option('--make-report', 'Also generate weekly report for current week')
   .option('--audit-coverage', 'Also run coverage audit for yesterday (Europe/Berlin)')
+  .option('--skip-ingest', 'Skip the ingest step (the API scheduler fetches stations itself)')
   .action(async (opts) => {
-    runIngest({ configPath: opts.config, dbPath: opts.db, logger })
+    (opts.skipIngest ? Promise.resolve() : runIngest({ configPath: opts.config, dbPath: opts.db, logger }))
       .then(async () => {
         await runAllMaintenance({
           dbPath: opts.db,
@@ -274,6 +284,27 @@ program
       });
     } catch (err) {
       logger.error({ err: err.message }, 'api failed');
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('clear-db')
+  .description('Delete collected data (station configuration, settings and blocked tracks are kept)')
+  .option('--db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('--scope <scope>', 'all | station', 'all')
+  .option('--station-id <id>', 'Station id for --scope station')
+  .option('--yes', 'Confirm deletion')
+  .action((opts) => {
+    if (!opts.yes) {
+      logger.error('clear-db needs --yes to confirm');
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      clearDatabase({ dbPath: opts.db, scope: opts.scope, stationId: opts.stationId, logger });
+    } catch (err) {
+      logger.error({ err: err.message }, 'clear-db failed');
       process.exitCode = 1;
     }
   });

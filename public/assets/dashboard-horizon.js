@@ -21,10 +21,26 @@ import {
   apiFetch,
   formatNumber,
   formatDateTime,
+  formatDate,
+  formatDuration,
+  formatRelative,
   useDebouncedValue,
   AppShell,
   PanelCard,
-  useUiColors
+  StatTile,
+  TrackCover,
+  PlayButton,
+  CoverPlay,
+  AppIcons,
+  BRAND_GRADIENT,
+  NIGHT_GRADIENT,
+  navigate,
+  trackHref,
+  useLocationSearch,
+  useUiColors,
+  LoadingOverlay,
+  LoadingSpinner,
+  SkeletonRows
 } from './horizon-lib.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -84,9 +100,6 @@ function toFixedLocale(value, digits = 2) {
   return num.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: digits });
 }
 
-function openTrackPage(trackKey) {
-  window.location.href = `/dashboard?trackKey=${encodeURIComponent(trackKey)}`;
-}
 
 // ── Track detail data helpers ─────────────────────────────────────────────────
 
@@ -150,26 +163,6 @@ function computeSongScore({ selectedTrack, trend, totals, matrix, maxTrackPlays,
   return { score, label, popularityPct, momentumPct, spreadPct, dailyStrengthPct };
 }
 
-// ── Small components ──────────────────────────────────────────────────────────
-
-function StatCard({ label, value, compact }) {
-  const ui = useUiColors();
-  return React.createElement(
-    PanelCard, { p: '4' },
-    React.createElement(Chakra.Text, { fontSize: 'xs', color: ui.textMuted, mb: '1' }, label),
-    React.createElement(Chakra.Text, { fontSize: compact ? 'sm' : '2xl', fontWeight: '800', color: ui.textPrimary, noOfLines: compact ? 2 : undefined }, value)
-  );
-}
-
-function MiniKpi({ label, value }) {
-  const ui = useUiColors();
-  return React.createElement(
-    Chakra.Box, { border: '1px solid', borderColor: ui.lineColor, borderRadius: '12px', px: '3', py: '2' },
-    React.createElement(Chakra.Text, { fontSize: 'xs', color: ui.textMuted }, label),
-    React.createElement(Chakra.Text, { fontSize: 'lg', fontWeight: '700', color: ui.textPrimary }, value)
-  );
-}
-
 function MetricLine({ label, value, colorScheme }) {
   const ui = useUiColors();
   return React.createElement(
@@ -179,54 +172,6 @@ function MetricLine({ label, value, colorScheme }) {
       React.createElement(Chakra.Text, { fontSize: 'sm', fontWeight: '700', color: ui.textPrimary }, `${value}%`)
     ),
     React.createElement(Chakra.Progress, { value: Number(value || 0), colorScheme, size: 'sm', borderRadius: '999px' })
-  );
-}
-
-function PreviewControl({ previewUrl, externalUrl, compact }) {
-  if (previewUrl) {
-    return React.createElement(
-      Chakra.HStack, { spacing: '2', align: 'center' },
-      React.createElement('audio', { controls: true, preload: 'none', src: previewUrl, style: { height: '30px', width: compact ? '180px' : '220px' } }),
-      externalUrl ? React.createElement(Chakra.Link, { href: externalUrl, target: '_blank', rel: 'noreferrer', color: 'teal.500' }, 'iTunes') : null
-    );
-  }
-  if (externalUrl) return React.createElement(Chakra.Link, { href: externalUrl, target: '_blank', rel: 'noreferrer', color: 'teal.500' }, 'Titelseite');
-  return React.createElement(Chakra.Tag, { colorScheme: 'orange', borderRadius: '999px' }, 'Kein Preview');
-}
-
-// ── SongPerformanceCard ───────────────────────────────────────────────────────
-
-function SongPerformanceCard({ selectedTrack, trend, totals, matrix, maxTrackPlays, from, to }) {
-  const ui = useUiColors();
-  if (!selectedTrack) return React.createElement(Chakra.Text, { color: ui.textMuted }, 'Kein Track geladen.');
-  const rangeDays = dayCount(from, to);
-  const score = computeSongScore({ selectedTrack, trend, totals, matrix, maxTrackPlays, rangeDays });
-  return React.createElement(
-    Chakra.VStack, { align: 'stretch', spacing: '4' },
-    React.createElement(Chakra.HStack, { justify: 'space-between' },
-      React.createElement(Chakra.HStack, { spacing: '4', align: 'end' },
-        React.createElement(Chakra.Text, { fontSize: '5xl', lineHeight: '1', fontWeight: '800', color: ui.textPrimary }, score.score),
-        React.createElement(Chakra.Text, { fontSize: 'md', color: ui.textMuted, pb: '2' }, '/ 100')
-      ),
-      React.createElement(Chakra.Badge, { colorScheme: score.score >= 55 ? 'green' : score.score >= 35 ? 'orange' : 'red', px: '3', py: '1', borderRadius: '999px' }, score.label)
-    ),
-    React.createElement(Chakra.Progress, { value: score.score, colorScheme: 'blue', borderRadius: '999px', size: 'md' }),
-    React.createElement(Chakra.HStack, { spacing: '3', flexWrap: 'wrap' },
-      React.createElement(Chakra.Tag, { colorScheme: 'gray', borderRadius: '999px' }, `Release: ${fmtDateOnly(selectedTrack.release_date_utc)}`),
-      React.createElement(PreviewControl, { previewUrl: selectedTrack.preview_url, externalUrl: selectedTrack.external_url })
-    ),
-    React.createElement(Chakra.SimpleGrid, { columns: { base: 1, md: 2 }, spacing: '3' },
-      React.createElement(MetricLine, { label: 'Beliebtheit im Panel', value: score.popularityPct.toFixed(0), colorScheme: 'blue' }),
-      React.createElement(MetricLine, { label: 'Momentum', value: score.momentumPct.toFixed(0), colorScheme: 'green' }),
-      React.createElement(MetricLine, { label: 'Sender-Breite', value: score.spreadPct.toFixed(0), colorScheme: 'purple' }),
-      React.createElement(MetricLine, { label: 'Durchschnitt Plays/Tag', value: score.dailyStrengthPct.toFixed(0), colorScheme: 'orange' })
-    ),
-    React.createElement(Chakra.SimpleGrid, { columns: { base: 2, md: 4 }, spacing: '2' },
-      React.createElement(MiniKpi, { label: 'Plays gesamt', value: formatNumber(totals?.totals?.allTime || 0) }),
-      React.createElement(MiniKpi, { label: 'Heute', value: formatNumber(totals?.totals?.today || 0) }),
-      React.createElement(MiniKpi, { label: 'Woche', value: formatNumber(totals?.totals?.thisWeek || 0) }),
-      React.createElement(MiniKpi, { label: 'Trend 48h', value: formatNumber(trend?.plays_last_48h || 0) })
-    )
   );
 }
 
@@ -381,12 +326,64 @@ function LegacyStatsCharts({ selectedTrack, from, to, bucket, cumulativeSeries, 
   );
 }
 
+
+function openTrackPage(trackKey) {
+  navigate(trackHref(trackKey));
+}
+
+function playable(row) {
+  return { trackKey: row.track_key, artist: row.artist, title: row.title, artworkUrl: row.artwork_url || null };
+}
+
+// ── SongPerformanceCard ───────────────────────────────────────────────────────
+
+function SongPerformanceCard({ selectedTrack, trend, totals, matrix, maxTrackPlays, from, to }) {
+  if (!selectedTrack) return html`<${Chakra.Text} color="textMuted">Kein Track geladen.<//>`;
+  const rangeDays = dayCount(from, to);
+  const score = computeSongScore({ selectedTrack, trend, totals, matrix, maxTrackPlays, rangeDays });
+  const scheme = score.score >= 55 ? 'green' : score.score >= 35 ? 'orange' : 'red';
+  return html`
+    <${Chakra.VStack} align="stretch" spacing="5">
+      <${Chakra.HStack} justify="space-between" align="end">
+        <${Chakra.HStack} spacing="3" align="end">
+          <${Chakra.Text} fontSize="5xl" lineHeight="1" fontWeight="800" letterSpacing="-0.04em" bgGradient="linear(135deg, brand.600, brand.400)" bgClip="text">
+            ${score.score}
+          <//>
+          <${Chakra.Text} fontSize="md" color="textMuted" pb="1">/ 100<//>
+        <//>
+        <${Chakra.Badge} colorScheme=${scheme} px="3" py="1" fontSize="sm">${score.label}<//>
+      <//>
+      <${Chakra.Progress} value=${score.score} colorScheme="brand" borderRadius="full" size="sm" />
+      <${Chakra.SimpleGrid} columns=${{ base: 1, md: 2 }} spacingX="6" spacingY="4">
+        <${MetricLine} label="Beliebtheit im Panel" value=${score.popularityPct.toFixed(0)} colorScheme="brand" />
+        <${MetricLine} label="Momentum" value=${score.momentumPct.toFixed(0)} colorScheme="green" />
+        <${MetricLine} label="Sender-Breite" value=${score.spreadPct.toFixed(0)} colorScheme="purple" />
+        <${MetricLine} label="Durchschnitt Plays/Tag" value=${score.dailyStrengthPct.toFixed(0)} colorScheme="orange" />
+      <//>
+      <${Chakra.SimpleGrid} columns=${{ base: 2, md: 4 }} spacing="3">
+        ${[
+          ['Plays im Zeitraum', formatNumber(totals?.totals?.allTime || 0)],
+          ['Heute', formatNumber(totals?.totals?.today || 0)],
+          ['Diese Woche', formatNumber(totals?.totals?.thisWeek || 0)],
+          ['Letzte 48h', formatNumber(trend?.plays_last_48h || 0)]
+        ].map(([label, value]) => html`
+          <${Chakra.Box} key=${label} bg="subtleBg" borderRadius="14px" px="4" py="3">
+            <${Chakra.Text} fontSize="xs" color="textMuted">${label}<//>
+            <${Chakra.Text} fontSize="xl" fontWeight="800">${value}<//>
+          <//>
+        `)}
+      <//>
+    <//>
+  `;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-// ── DashboardApp — Track list only ───────────────────────────────────────────
+// ── DashboardApp — track catalogue ───────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
+const RENDER_STEP = 500;
+
 function DashboardApp() {
-  const ui = useUiColors();
   const toast = Chakra.useToast();
 
   const [search, setSearch] = React.useState('');
@@ -405,10 +402,27 @@ function DashboardApp() {
   const debouncedSearch = useDebouncedValue(search, 250);
   const sortedTracks = React.useMemo(() => sortTracks(tracks, sortMode), [tracks, sortMode]);
 
+  // All rows are loaded (KPIs, sorting), but rendered in steps so "Alle" stays fast with many tracks.
+  const [visibleCount, setVisibleCount] = React.useState(RENDER_STEP);
+  React.useEffect(() => setVisibleCount(RENDER_STEP), [sortedTracks]);
+  const visibleTracks = React.useMemo(() => sortedTracks.slice(0, visibleCount), [sortedTracks, visibleCount]);
+  const hasMoreRows = visibleCount < sortedTracks.length;
+  const sentinelRef = React.useRef(null);
+  React.useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMoreRows || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setVisibleCount((count) => count + RENDER_STEP);
+    }, { rootMargin: '800px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMoreRows, visibleCount]);
+
   const trackSummary = React.useMemo(() => {
     const totalPlays = tracks.reduce((s, r) => s + Number(r.total_plays || 0), 0);
     const uniqueArtists = new Set(tracks.map((r) => String(r.artist || '').toLowerCase()).filter(Boolean)).size;
-    return { tracks: tracks.length, plays: totalPlays, artists: uniqueArtists };
+    const top = [...tracks].sort((a, b) => Number(b.total_plays || 0) - Number(a.total_plays || 0))[0] || null;
+    return { tracks: tracks.length, plays: totalPlays, artists: uniqueArtists, top };
   }, [tracks]);
 
   const loadStations = React.useCallback(async () => {
@@ -423,7 +437,6 @@ function DashboardApp() {
       const params = new URLSearchParams({ q: debouncedSearch, stationId, limit: trackLimit });
       if (!stationId) params.delete('stationId');
       if (!debouncedSearch) params.delete('q');
-      if (trackLimit === 'all') params.delete('limit');
       const rows = await apiFetch(`/api/tracks?${params}`);
       setTracks(Array.isArray(rows) ? rows : []);
     } catch (error) {
@@ -441,8 +454,7 @@ function DashboardApp() {
       toast({ status: 'success', title: 'Track gelöscht', description: `"${artistTitle}" wurde entfernt und blockiert.` });
       await loadTracks();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      toast({ status: 'error', title: 'Löschen fehlgeschlagen', description: msg });
+      toast({ status: 'error', title: 'Löschen fehlgeschlagen', description: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -472,161 +484,439 @@ function DashboardApp() {
   React.useEffect(() => { loadStations().catch(() => {}); }, [loadStations]);
   React.useEffect(() => { loadTracks(); }, [loadTracks]);
 
-  return React.createElement(
-    AppShell,
-    {
-      activeKey: 'dashboard',
-      title: 'Dashboard',
-      subtitle: 'Track-Katalog',
-      controls: React.createElement(Chakra.Button, { size: 'sm', leftIcon: React.createElement(Icons.RepeatIcon), onClick: () => loadTracks(), isLoading: loadingTracks, colorScheme: 'blue' }, 'Neu laden')
-    },
-    React.createElement(Chakra.VStack, { align: 'stretch', spacing: '5' },
+  const top = trackSummary.top;
+  const firstLoad = loadingTracks && tracks.length === 0;
+  const kpi = (value) => (firstLoad ? '…' : value);
 
-      // Error
-      errorText ? React.createElement(Chakra.Alert, { status: 'error', borderRadius: '14px' },
-        React.createElement(Chakra.AlertIcon),
-        React.createElement(Chakra.Text, null, errorText)
-      ) : null,
+  return html`
+    <${AppShell}
+      activeKey="dashboard"
+      title="Dashboard"
+      subtitle="Track-Katalog aller beobachteten Sender"
+      controls=${html`
+        <${Chakra.Button} size="sm" leftIcon=${html`<${Icons.RepeatIcon} />`} onClick=${() => loadTracks()} isLoading=${loadingTracks} colorScheme="brand">
+          Neu laden
+        <//>
+      `}
+    >
+      <${Chakra.VStack} align="stretch" spacing="6">
+        ${errorText ? html`
+          <${Chakra.Alert} status="error" borderRadius="14px">
+            <${Chakra.AlertIcon} />
+            <${Chakra.Text}>${errorText}<//>
+          <//>
+        ` : null}
 
-      // Filter
-      React.createElement(PanelCard, { title: 'Filter' },
-        React.createElement(Chakra.SimpleGrid, { columns: { base: 1, md: 2, xl: 5 }, spacing: '3' },
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Suche'),
-            React.createElement(Chakra.Input, { placeholder: 'Interpret oder Titel', value: search, onChange: (e) => setSearch(e.target.value) })
-          ),
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Sender'),
-            React.createElement(Chakra.Select, { value: stationId, onChange: (e) => setStationId(e.target.value) },
-              React.createElement('option', { value: '' }, 'Alle Sender'),
-              ...stations.map((s) => React.createElement('option', { key: s.id, value: s.id }, s.name || s.id))
-            )
-          ),
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Limit'),
-            React.createElement(Chakra.Select, { value: trackLimit, onChange: (e) => setTrackLimit(e.target.value) },
-              ...['100', '250', '500', '1000', 'all'].map((v) => React.createElement('option', { key: v, value: v }, v === 'all' ? 'Alle' : v))
-            )
-          ),
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Sortierung'),
-            React.createElement(Chakra.Select, { value: sortMode, onChange: (e) => setSortMode(e.target.value) },
-              ...SORT_OPTIONS.map((o) => React.createElement('option', { key: o.value, value: o.value }, o.label))
-            )
-          ),
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, { visibility: 'hidden' }, 'Laden'),
-            React.createElement(Chakra.Button, { colorScheme: 'blue', onClick: () => loadTracks(), isLoading: loadingTracks, w: '100%' }, 'Laden')
-          )
-        )
-      ),
+        <${Chakra.SimpleGrid} columns=${{ base: 2, xl: 4 }} spacing=${{ base: "3", md: "4" }}>
+          <${StatTile} accent label="Gefundene Titel" value=${kpi(formatNumber(trackSummary.tracks))} icon=${AppIcons.Music} hint=${stationId ? 'im gewählten Sender' : 'über alle Sender'} />
+          <${StatTile} label="Einsätze gesamt" value=${kpi(formatNumber(trackSummary.plays))} icon=${AppIcons.Activity} />
+          <${StatTile} label="Künstler" value=${kpi(formatNumber(trackSummary.artists))} icon=${AppIcons.Users} />
+          <${StatTile}
+            label="Meistgespielt"
+            value=${firstLoad ? '…' : top ? top.title : '–'}
+            hint=${top ? `${top.artist} · ${formatNumber(top.total_plays)} Plays` : null}
+            icon=${AppIcons.Zap}
+          />
+        <//>
 
-      // Stats + Track list (grouped tightly so the section title sits directly below the KPIs)
-      React.createElement(Chakra.VStack, { align: 'stretch', spacing: '2' },
-        React.createElement(Chakra.SimpleGrid, { columns: { base: 2, lg: 3 }, spacing: '3' },
-          React.createElement(StatCard, { label: 'Gefundene Titel', value: formatNumber(trackSummary.tracks) }),
-          React.createElement(StatCard, { label: 'Einsätze gesamt', value: formatNumber(trackSummary.plays) }),
-          React.createElement(StatCard, { label: 'Künstler', value: formatNumber(trackSummary.artists) })
-        ),
+        <${PanelCard} p="0">
+          <${Chakra.Flex} px="5" pt="5" pb="4" gap="3" wrap="wrap" align="end">
+            <${Chakra.InputGroup} flex="2 1 260px">
+              <${Chakra.InputLeftElement} pointerEvents="none" color="textMuted"><${AppIcons.Search} /><//>
+              <${Chakra.Input} placeholder="Interpret oder Titel suchen" value=${search} onChange=${(e) => setSearch(e.target.value)} />
+            <//>
+            <${Chakra.Select} flex="1 1 180px" value=${stationId} onChange=${(e) => setStationId(e.target.value)}>
+              <option value="">Alle Sender</option>
+              ${stations.map((s) => html`<option key=${s.id} value=${s.id}>${s.name || s.id}</option>`)}
+            <//>
+            <${Chakra.Select} flex="1 1 160px" value=${sortMode} onChange=${(e) => setSortMode(e.target.value)}>
+              ${SORT_OPTIONS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+            <//>
+            <${Chakra.Select} flex="0 1 130px" value=${trackLimit} onChange=${(e) => setTrackLimit(e.target.value)}>
+              ${['100', '250', '500', '1000', 'all'].map((v) => html`<option key=${v} value=${v}>${v === 'all' ? 'Alle' : `${v} Titel`}</option>`)}
+            <//>
+          <//>
+          <${Chakra.Flex} px="5" pb="3" justify="space-between" align="center">
+            <${Chakra.Text} fontSize="sm" color="textMuted">
+              ${loadingTracks ? 'Lade…' : `${formatNumber(sortedTracks.length)} Titel${hasMoreRows ? ` · ${formatNumber(visibleTracks.length)} angezeigt` : ''}`}
+            <//>
+            ${(winnerTrackKey || loserTrackKey) ? html`
+              <${Chakra.HStack} spacing="2">
+                ${winnerTrackKey ? html`<${Chakra.Badge} colorScheme="green">Winner gewählt<//>` : null}
+                ${loserTrackKey ? html`<${Chakra.Badge} colorScheme="red">Loser gewählt<//>` : null}
+              <//>
+            ` : null}
+          <//>
+          <${LoadingOverlay} isLoading=${loadingTracks && sortedTracks.length > 0} label="Titel werden geladen…">
+          <${Chakra.TableContainer} className="horizon-scroll" borderTop="1px solid" borderColor="lineColor">
+            <${Chakra.Table} size="sm">
+              <${Chakra.Thead} bg="subtleBg">
+                <${Chakra.Tr}>
+                  <${Chakra.Th} w="44px" py="3" textAlign="right">#<//>
+                  <${Chakra.Th} py="3">Titel<//>
+                  <${Chakra.Th} py="3" isNumeric>Plays<//>
+                  <${Chakra.Th} py="3" isNumeric>Plays/Tag<//>
+                  <${Chakra.Th} py="3">Zuletzt gespielt<//>
+                  <${Chakra.Th} py="3" textAlign="right">Aktionen<//>
+                <//>
+              <//>
+              <${Chakra.Tbody}>
+                ${loadingTracks && sortedTracks.length === 0 ? html`<${SkeletonRows} rows=${8} columns=${6} />` : null}
+                ${visibleTracks.map((row, index) => html`
+                  <${Chakra.Tr}
+                    key=${row.track_key}
+                    className="rv-row-clickable group"
+                    _hover=${{ bg: 'subtleBg' }}
+                    onClick=${() => openTrackPage(row.track_key)}
+                  >
+                    <${Chakra.Td} py="2.5" textAlign="right" color="textMuted" fontSize="xs" fontWeight="600">${index + 1}<//>
+                    <${Chakra.Td} py="2.5" maxW="460px">
+                      <${Chakra.HStack} spacing="3">
+                        <${CoverPlay} track=${playable(row)} size="44px" />
+                        <${Chakra.Box} minW="0">
+                          <${Chakra.Text} fontWeight="700" fontSize="sm" color="textPrimary" noOfLines=${1}>${row.title}<//>
+                          <${Chakra.Text} fontSize="sm" color="textMuted" noOfLines=${1}>${row.artist}<//>
+                        <//>
+                      <//>
+                    <//>
+                    <${Chakra.Td} py="2.5" isNumeric fontWeight="700">${formatNumber(row.total_plays)}<//>
+                    <${Chakra.Td} py="2.5" isNumeric>${Number(row.plays_per_day || 0).toLocaleString('de-DE', { maximumFractionDigits: 1 })}<//>
+                    <${Chakra.Td} py="2.5" fontSize="sm" color="textMuted">
+                      <${Chakra.Tooltip} label=${formatDateTime(row.last_played_at_utc)}><span>${formatRelative(row.last_played_at_utc)}</span><//>
+                    <//>
+                    <${Chakra.Td} py="2.5" onClick=${(e) => e.stopPropagation()}>
+                      <${Chakra.HStack} spacing="1" justify="flex-end">
+                        <${Chakra.Tooltip} label="Als Winner für Merge wählen">
+                          <${Chakra.Button}
+                            size="xs"
+                            variant=${winnerTrackKey === row.track_key ? 'solid' : 'ghost'}
+                            colorScheme=${winnerTrackKey === row.track_key ? 'green' : 'gray'}
+                            onClick=${() => setWinnerTrackKey(winnerTrackKey === row.track_key ? '' : row.track_key)}
+                          >W<//>
+                        <//>
+                        <${Chakra.Tooltip} label="Als Loser für Merge wählen">
+                          <${Chakra.Button}
+                            size="xs"
+                            variant=${loserTrackKey === row.track_key ? 'solid' : 'ghost'}
+                            colorScheme=${loserTrackKey === row.track_key ? 'red' : 'gray'}
+                            onClick=${() => setLoserTrackKey(loserTrackKey === row.track_key ? '' : row.track_key)}
+                          >L<//>
+                        <//>
+                        <${Chakra.Tooltip} label="Löschen und sperren">
+                          <${Chakra.IconButton}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            aria-label="Löschen"
+                            icon=${html`<${Icons.DeleteIcon} />`}
+                            onClick=${() => deleteTrack(row.track_key, `${row.artist} – ${row.title}`)}
+                          />
+                        <//>
+                        <${Chakra.IconButton}
+                          size="xs"
+                          variant="ghost"
+                          aria-label="Öffnen"
+                          icon=${html`<${Icons.ChevronRightIcon} boxSize="4" />`}
+                          onClick=${() => openTrackPage(row.track_key)}
+                        />
+                      <//>
+                    <//>
+                  <//>
+                `)}
+                ${sortedTracks.length === 0 && !loadingTracks ? html`
+                  <${Chakra.Tr}><${Chakra.Td} colSpan=${6} color="textMuted" py="10" textAlign="center">Keine Treffer. Filter anpassen.<//><//>
+                ` : null}
+              <//>
+            <//>
+          <//>
+          <//>
+          ${hasMoreRows ? html`
+            <${Chakra.Flex} ref=${sentinelRef} justify="center" align="center" gap="3" py="5" borderTop="1px solid" borderColor="lineColor">
+              <${Chakra.Spinner} size="sm" color="brand.400" />
+              <${Chakra.Button} size="sm" variant="ghost" colorScheme="brand" onClick=${() => setVisibleCount((count) => count + RENDER_STEP)}>
+                Weitere ${formatNumber(Math.min(RENDER_STEP, sortedTracks.length - visibleCount))} von ${formatNumber(sortedTracks.length - visibleCount)} Titeln anzeigen
+              <//>
+            <//>
+          ` : null}
+        <//>
 
-        // Track list
-        React.createElement(PanelCard, { title: 'Track-Liste', subtitle: loadingTracks ? 'Lade...' : `${formatNumber(sortedTracks.length)} geladen`, p: '0' },
-        React.createElement(Chakra.TableContainer, { className: 'horizon-scroll' },
-          React.createElement(Chakra.Table, { size: 'sm' },
-            React.createElement(Chakra.Thead, { position: 'sticky', top: '0', bg: 'cardBg', zIndex: '1' },
-              React.createElement(Chakra.Tr, null,
-                React.createElement(Chakra.Th, { py: '3' }, 'Track'),
-                React.createElement(Chakra.Th, { py: '3', isNumeric: true }, 'Plays'),
-                React.createElement(Chakra.Th, { py: '3', isNumeric: true }, 'P/Tag'),
-                React.createElement(Chakra.Th, { py: '3' }, 'Letztes Play'),
-                React.createElement(Chakra.Th, { py: '3' }, 'Winner'),
-                React.createElement(Chakra.Th, { py: '3' }, 'Loser'),
-                React.createElement(Chakra.Th, { py: '3' }, ''),
-                React.createElement(Chakra.Th, { py: '3' }, '')
-              )
-            ),
-            React.createElement(Chakra.Tbody, null,
-              ...sortedTracks.map((row) => React.createElement(
-                Chakra.Tr, { key: row.track_key, _hover: { bg: ui.subtleBg } },
-                React.createElement(Chakra.Td, { py: '2' },
-                  React.createElement(Chakra.Text, { fontWeight: '700', fontSize: 'sm', color: ui.textPrimary }, row.artist),
-                  React.createElement(Chakra.Text, { fontSize: 'xs', color: ui.textMuted }, row.title)
-                ),
-                React.createElement(Chakra.Td, { py: '2', isNumeric: true, fontSize: 'sm' }, formatNumber(row.total_plays)),
-                React.createElement(Chakra.Td, { py: '2', isNumeric: true, fontSize: 'sm' }, Number(row.plays_per_day || 0).toLocaleString('de-DE', { maximumFractionDigits: 1 })),
-                React.createElement(Chakra.Td, { py: '2', fontSize: 'xs', color: ui.textMuted }, formatDateTime(row.last_played_at_utc)),
-                React.createElement(Chakra.Td, { py: '2' },
-                  React.createElement(Chakra.Button, {
-                    size: 'xs', variant: winnerTrackKey === row.track_key ? 'solid' : 'outline',
-                    colorScheme: winnerTrackKey === row.track_key ? 'green' : 'gray',
-                    onClick: () => setWinnerTrackKey(winnerTrackKey === row.track_key ? '' : row.track_key)
-                  }, 'W')
-                ),
-                React.createElement(Chakra.Td, { py: '2' },
-                  React.createElement(Chakra.Button, {
-                    size: 'xs', variant: loserTrackKey === row.track_key ? 'solid' : 'outline',
-                    colorScheme: loserTrackKey === row.track_key ? 'red' : 'gray',
-                    onClick: () => setLoserTrackKey(loserTrackKey === row.track_key ? '' : row.track_key)
-                  }, 'L')
-                ),
-                React.createElement(Chakra.Td, { py: '2' },
-                  React.createElement(Chakra.Button, {
-                    size: 'xs', colorScheme: 'blue', variant: 'ghost',
-                    rightIcon: React.createElement(Icons.ExternalLinkIcon),
-                    onClick: () => openTrackPage(row.track_key)
-                  }, 'Öffnen')
-                ),
-                React.createElement(Chakra.Td, { py: '2' },
-                  React.createElement(Chakra.Button, {
-                    size: 'xs', colorScheme: 'red', variant: 'outline',
-                    onClick: () => deleteTrack(row.track_key, `${row.artist} - ${row.title}`)
-                  }, 'Löschen')
-                )
-              )),
-              sortedTracks.length === 0 && !loadingTracks
-                ? React.createElement(Chakra.Tr, null, React.createElement(Chakra.Td, { colSpan: 8, color: ui.textMuted, py: '6', textAlign: 'center' }, 'Keine Treffer. Filter anpassen.'))
-                : null
-            )
-          )
-        )
-      ) // PanelCard Track-Liste
-      ), // end Stats+TrackList VStack
-
-      // Admin Merge
-      React.createElement(PanelCard, { title: 'Admin: Track-Merge' },
-        React.createElement(Chakra.SimpleGrid, { columns: { base: 1, md: 3 }, spacing: '3', alignItems: 'end' },
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Winner Track Key'),
-            React.createElement(Chakra.Input, { value: winnerTrackKey, onChange: (e) => setWinnerTrackKey(e.target.value), placeholder: 'winner-key', fontFamily: 'mono', fontSize: 'sm' })
-          ),
-          React.createElement(Chakra.FormControl, null,
-            React.createElement(Chakra.FormLabel, null, 'Loser Track Key'),
-            React.createElement(Chakra.Input, { value: loserTrackKey, onChange: (e) => setLoserTrackKey(e.target.value), placeholder: 'loser-key', fontFamily: 'mono', fontSize: 'sm' })
-          ),
-          React.createElement(Chakra.Button, { colorScheme: 'red', variant: 'outline', onClick: runMerge, isDisabled: !winnerTrackKey || !loserTrackKey }, 'Merge ausführen')
-        ),
-        mergeState ? React.createElement(Chakra.Text, { mt: '3', fontSize: 'sm', color: ui.textMuted }, mergeState) : null,
-        React.createElement(Chakra.Text, { mt: '2', fontSize: 'xs', color: ui.textMuted }, 'Tipp: W/L-Buttons in der Tabelle klicken um Keys zu übernehmen.')
-      )
-    )
-  );
+        <${PanelCard} title="Track-Merge" subtitle="Doppelte Einträge zusammenführen: W/L in der Tabelle wählen oder Keys eintragen." icon=${AppIcons.Link}>
+          <${Chakra.SimpleGrid} columns=${{ base: 1, md: 3 }} spacing="3" alignItems="end">
+            <${Chakra.FormControl}>
+              <${Chakra.FormLabel} fontSize="sm">Winner Track Key<//>
+              <${Chakra.Input} value=${winnerTrackKey} onChange=${(e) => setWinnerTrackKey(e.target.value)} placeholder="winner-key" fontFamily="mono" fontSize="sm" />
+            <//>
+            <${Chakra.FormControl}>
+              <${Chakra.FormLabel} fontSize="sm">Loser Track Key<//>
+              <${Chakra.Input} value=${loserTrackKey} onChange=${(e) => setLoserTrackKey(e.target.value)} placeholder="loser-key" fontFamily="mono" fontSize="sm" />
+            <//>
+            <${Chakra.Button} colorScheme="red" variant="outline" onClick=${runMerge} isDisabled=${!winnerTrackKey || !loserTrackKey}>Merge ausführen<//>
+          <//>
+          ${mergeState ? html`<${Chakra.Text} mt="3" fontSize="sm" color="textMuted">${mergeState}<//>` : null}
+        <//>
+      <//>
+    <//>
+  `;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── TrackDetailApp — Song page ────────────────────────────────────────────────
+// ── TrackDetailApp — song page ───────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-function TrackDetailApp({ trackKey }) {
-  const ui = useUiColors();
+const ROLE_LABELS = { Main: 'Hauptkünstler', Featured: 'Featured', Composer: 'Komponist', Producer: 'Produzent' };
+const RECORD_TYPES = { single: 'Single', album: 'Album', ep: 'EP', compile: 'Compilation' };
 
+function searchLinks(artist, title, isrc, itunesUrl) {
+  const q = encodeURIComponent(`${artist} ${title}`);
+  return [
+    { label: 'Spotify', href: `https://open.spotify.com/search/${q}` },
+    { label: 'Apple Music', href: itunesUrl || `https://music.apple.com/de/search?term=${q}` },
+    { label: 'YouTube', href: `https://www.youtube.com/results?search_query=${q}` },
+    { label: 'Genius', href: `https://genius.com/search?q=${q}` },
+    { label: 'MusicBrainz', href: isrc ? `https://musicbrainz.org/isrc/${encodeURIComponent(isrc)}` : `https://musicbrainz.org/search?query=${q}&type=recording` }
+  ];
+}
+
+function HeroChip({ icon, label, value, href, onCopy }) {
+  if (!value) return null;
+  const IconComponent = icon;
+  const content = html`
+    <${Chakra.HStack}
+      spacing="2"
+      px="3"
+      py="2"
+      borderRadius="12px"
+      bg="whiteAlpha.100"
+      border="1px solid"
+      borderColor="whiteAlpha.200"
+      color="white"
+      _hover=${href || onCopy ? { bg: 'whiteAlpha.200' } : undefined}
+      transition="background 0.15s ease"
+    >
+      ${IconComponent ? html`<${IconComponent} boxSize="14px" color="brand.300" />` : null}
+      <${Chakra.Box} lineHeight="1.2">
+        <${Chakra.Text} fontSize="10px" textTransform="uppercase" letterSpacing="0.1em" color="whiteAlpha.600" fontWeight="700">${label}<//>
+        <${Chakra.Text} fontSize="sm" fontWeight="600" noOfLines=${1}>${value}<//>
+      <//>
+      ${onCopy ? html`<${Icons.CopyIcon} boxSize="3" color="whiteAlpha.600" />` : null}
+    <//>
+  `;
+  if (href) return html`<${Chakra.Link} href=${href} isExternal _hover=${{ textDecoration: 'none' }}>${content}<//>`;
+  if (onCopy) return html`<${Chakra.Box} as="button" onClick=${onCopy} textAlign="left">${content}<//>`;
+  return content;
+}
+
+function TrackHero({ details, fallbackTrack, trackKey, loading, onRefresh, refreshing }) {
+  const toast = Chakra.useToast();
+  const deezer = details?.deezer || null;
+  const title = details?.title || fallbackTrack?.title || '…';
+  const artist = details?.artist || fallbackTrack?.artist || '';
+  const artwork = details?.artwork || fallbackTrack?.artwork_url || null;
+  const isrc = deezer?.track?.isrc || details?.metadata?.isrc || null;
+  const releaseDate = deezer?.track?.release_date || deezer?.album?.release_date || details?.metadata?.release_date_utc || null;
+  const durationSeconds = deezer?.track?.duration || (details?.metadata?.duration_ms ? details.metadata.duration_ms / 1000 : null);
+  const album = deezer?.album?.title || details?.metadata?.album || null;
+  const label = deezer?.album?.label || details?.metadata?.label || null;
+  const genres = deezer?.album?.genres?.length ? deezer.album.genres.join(', ') : details?.metadata?.genre || null;
+  const contributors = deezer?.contributors || [];
+  const collabs = contributors.length > 1 ? contributors : [];
+
+  const copyIsrc = async () => {
+    try {
+      await navigator.clipboard.writeText(isrc);
+      toast({ status: 'success', title: 'ISRC kopiert', description: isrc, duration: 2000 });
+    } catch {
+      toast({ status: 'warning', title: 'Kopieren nicht möglich', description: isrc });
+    }
+  };
+
+  return html`
+    <${Chakra.Box} position="relative" overflow="hidden" borderRadius="28px" bg=${NIGHT_GRADIENT} color="white" boxShadow="0 24px 60px rgba(2, 6, 23, 0.35)">
+      ${artwork ? html`<${Chakra.Box} className="rv-hero-backdrop" style=${{ backgroundImage: `url("${artwork}")` }} />` : null}
+      <${Chakra.Box} position="absolute" inset="0" bg="linear-gradient(90deg, rgba(2,6,23,0.92) 0%, rgba(2,6,23,0.72) 55%, rgba(2,6,23,0.55) 100%)" />
+      <${Chakra.Flex} position="relative" direction=${{ base: 'column', md: 'row' }} gap=${{ base: '6', md: '8' }} p=${{ base: '5', md: '8' }} align=${{ base: 'stretch', md: 'center' }}>
+        <${Chakra.Box} position="relative" alignSelf=${{ base: 'center', md: 'auto' }}>
+          ${loading && !artwork
+            ? html`<${Chakra.Skeleton} boxSize=${{ base: '200px', md: '230px' }} borderRadius="22px" startColor="whiteAlpha.200" endColor="whiteAlpha.400" />`
+            : html`<${Chakra.Box} boxShadow="0 24px 50px rgba(0,0,0,0.5)" borderRadius="22px"><${TrackCover} src=${artwork} size="230px" radius="22px" alt=${album || title} /><//>`}
+          <${Chakra.Box} position="absolute" right="-12px" bottom="-12px">
+            <${PlayButton} track=${{ trackKey, artist, title, artworkUrl: details?.artworkSmall || artwork }} size="lg" />
+          <//>
+        <//>
+
+        <${Chakra.VStack} align="stretch" spacing="4" flex="1" minW="0">
+          <${Chakra.HStack} spacing="2" flexWrap="wrap">
+            <${Chakra.Badge} bg="whiteAlpha.200" color="brand.200" fontSize="10px" letterSpacing="0.12em" textTransform="uppercase">Song<//>
+            ${deezer?.album?.record_type ? html`<${Chakra.Badge} bg="whiteAlpha.200" color="whiteAlpha.900">${RECORD_TYPES[deezer.album.record_type] || deezer.album.record_type}<//>` : null}
+            ${deezer?.track?.explicit_lyrics ? html`<${Chakra.Badge} colorScheme="red" variant="solid">Explicit<//>` : null}
+            ${deezer ? html`<${Chakra.Badge} bg="whiteAlpha.200" color="whiteAlpha.800">Deezer-Daten<//>` : loading ? html`<${Chakra.Badge} bg="whiteAlpha.200" color="whiteAlpha.700" className="rv-pulse">Lade Deezer-Daten…<//>` : null}
+          <//>
+          <${Chakra.Box}>
+            <${Chakra.Heading} size="2xl" letterSpacing="-0.03em" lineHeight="1.1" noOfLines=${2}>${title}<//>
+            <${Chakra.Text} mt="2" fontSize="xl" color="whiteAlpha.800" fontWeight="500" noOfLines=${2}>
+              ${deezer?.artist?.link
+                ? html`<${Chakra.Link} href=${deezer.artist.link} isExternal _hover=${{ color: 'brand.300' }}>${artist}<//>`
+                : artist}
+            <//>
+          <//>
+
+          ${collabs.length ? html`
+            <${Chakra.HStack} spacing="2" flexWrap="wrap">
+              <${Chakra.Text} fontSize="xs" color="whiteAlpha.600" fontWeight="700" textTransform="uppercase" letterSpacing="0.1em">Mitwirkende<//>
+              ${collabs.map((c) => html`
+                <${Chakra.Link} key=${c.id} href=${c.link} isExternal _hover=${{ textDecoration: 'none' }}>
+                  <${Chakra.HStack} spacing="2" pl="1" pr="3" py="1" borderRadius="full" bg="whiteAlpha.100" _hover=${{ bg: 'whiteAlpha.200' }}>
+                    <${Chakra.Avatar} size="xs" name=${c.name} src=${c.picture || undefined} />
+                    <${Chakra.Text} fontSize="sm" fontWeight="600">${c.name}<//>
+                    ${c.role && c.role !== 'Main' ? html`<${Chakra.Text} fontSize="xs" color="brand.300">${ROLE_LABELS[c.role] || c.role}<//>` : null}
+                  <//>
+                <//>
+              `)}
+            <//>
+          ` : null}
+
+          <${Chakra.Wrap} spacing="2">
+            <${HeroChip} icon=${AppIcons.Disc} label="Album" value=${album} href=${deezer?.album?.link} />
+            <${HeroChip} icon=${AppIcons.Calendar} label="Erschienen" value=${releaseDate ? formatDate(releaseDate) : null} />
+            <${HeroChip} icon=${AppIcons.Clock} label="Dauer" value=${durationSeconds ? formatDuration(durationSeconds) : null} />
+            <${HeroChip} icon=${AppIcons.Tag} label="ISRC" value=${isrc} onCopy=${isrc ? copyIsrc : null} />
+            <${HeroChip} icon=${AppIcons.Report} label="Label" value=${label} />
+            <${HeroChip} icon=${AppIcons.Music} label="Genre" value=${genres} />
+            <${HeroChip} icon=${AppIcons.Activity} label="BPM" value=${deezer?.track?.bpm ? Math.round(deezer.track.bpm) : null} />
+            <${HeroChip} icon=${AppIcons.Zap} label="Deezer-Rang" value=${deezer?.track?.rank ? formatNumber(deezer.track.rank) : null} />
+          <//>
+
+          <${Chakra.Wrap} spacing="2">
+            ${deezer?.track?.link ? html`
+              <${Chakra.Button} as="a" href=${deezer.track.link} target="_blank" rel="noreferrer" size="sm" bg=${BRAND_GRADIENT} color="white" _hover=${{ filter: 'brightness(1.1)' }} rightIcon=${html`<${Icons.ExternalLinkIcon} />`}>
+                Auf Deezer öffnen
+              <//>
+            ` : null}
+            ${(artist || title ? searchLinks(artist, title, isrc, details?.metadata?.external_url) : []).map((link) => html`
+              <${Chakra.Button} key=${link.label} as="a" href=${link.href} target="_blank" rel="noreferrer" size="sm" variant="outline" color="white" borderColor="whiteAlpha.300" _hover=${{ bg: 'whiteAlpha.200' }}>
+                ${link.label}
+              <//>
+            `)}
+            <${Chakra.Tooltip} label="Deezer-Daten neu abrufen">
+              <${Chakra.IconButton} size="sm" variant="ghost" color="whiteAlpha.700" _hover=${{ bg: 'whiteAlpha.200', color: 'white' }} aria-label="Neu abrufen" icon=${html`<${Icons.RepeatIcon} />`} onClick=${onRefresh} isLoading=${refreshing} />
+            <//>
+          <//>
+        <//>
+      <//>
+    <//>
+  `;
+}
+
+function StationsCard({ stations, total, loading }) {
+  const max = Math.max(1, ...stations.map((s) => Number(s.plays || 0)));
+  return html`
+    <${PanelCard} title="Läuft bei" subtitle=${loading ? 'Lade…' : `${stations.length} Sender · ${formatNumber(total)} Plays insgesamt`} icon=${AppIcons.Radio}>
+      ${loading ? html`<${LoadingSpinner} label="Lade Sender…" py="10" />` : stations.length ? html`
+        <${Chakra.VStack} align="stretch" spacing="3" maxH="420px" overflowY="auto" className="horizon-scroll" pr="1">
+          ${stations.map((s) => html`
+            <${Chakra.Box} key=${s.station_id}>
+              <${Chakra.HStack} justify="space-between" mb="1">
+                <${Chakra.Text} fontSize="sm" fontWeight="600" noOfLines=${1}>${s.station_name}<//>
+                <${Chakra.Text} fontSize="sm" fontWeight="700">${formatNumber(s.plays)}<//>
+              <//>
+              <${Chakra.Box} h="6px" borderRadius="full" bg="subtleBg" overflow="hidden">
+                <${Chakra.Box} h="100%" w=${`${(Number(s.plays) / max) * 100}%`} bg=${BRAND_GRADIENT} borderRadius="full" />
+              <//>
+              <${Chakra.Text} mt="1" fontSize="xs" color="textMuted">Zuletzt ${formatRelative(s.last_played_at_utc)} · seit ${formatDate(s.first_played_at_utc)}<//>
+            <//>
+          `)}
+        <//>
+      ` : html`<${Chakra.Text} color="textMuted">Noch keine Plays.<//>`}
+    <//>
+  `;
+}
+
+function RecentPlaysCard({ plays, loading }) {
+  return html`
+    <${PanelCard} title="Zuletzt gespielt" subtitle="Die letzten Einsätze im Radio" icon=${AppIcons.Clock}>
+      ${loading ? html`<${LoadingSpinner} label="Lade Einsätze…" py="10" />` : plays.length ? html`
+        <${Chakra.VStack} align="stretch" spacing="0" maxH="420px" overflowY="auto" className="horizon-scroll" pr="1">
+          ${plays.map((p, index) => html`
+            <${Chakra.HStack} key=${`${p.played_at_utc}-${p.station_id}-${index}`} spacing="3" py="2.5" borderBottom=${index === plays.length - 1 ? 'none' : '1px solid'} borderColor="lineColor">
+              <${Chakra.Box} w="8px" h="8px" borderRadius="full" bg=${index === 0 ? 'brand.400' : 'navy.200'} flexShrink="0" />
+              <${Chakra.Box} flex="1" minW="0">
+                <${Chakra.Text} fontSize="sm" fontWeight="600" noOfLines=${1}>${p.station_name}<//>
+                <${Chakra.Text} fontSize="xs" color="textMuted" noOfLines=${1}>„${p.artist_raw} – ${p.title_raw}“<//>
+              <//>
+              <${Chakra.Box} textAlign="right" flexShrink="0">
+                <${Chakra.Text} fontSize="sm" fontWeight="600">${formatRelative(p.played_at_utc)}<//>
+                <${Chakra.Text} fontSize="xs" color="textMuted">${formatDateTime(p.played_at_utc)}<//>
+              <//>
+            <//>
+          `)}
+        <//>
+      ` : html`<${Chakra.Text} color="textMuted">Noch keine Plays.<//>`}
+    <//>
+  `;
+}
+
+function ArtistCard({ deezer }) {
+  const artist = deezer?.artist;
+  if (!artist) return null;
+  return html`
+    <${PanelCard} title="Über den Künstler" icon=${AppIcons.Users}>
+      <${Chakra.HStack} spacing="4" align="center">
+        <${Chakra.Avatar} size="xl" name=${artist.name} src=${artist.picture || undefined} />
+        <${Chakra.Box} minW="0">
+          <${Chakra.Heading} size="md" noOfLines=${1}>${artist.name}<//>
+          <${Chakra.HStack} mt="2" spacing="4" color="textMuted" fontSize="sm">
+            ${artist.nb_fan != null ? html`<${Chakra.Text}><b>${formatNumber(artist.nb_fan)}</b> Fans<//>` : null}
+            ${artist.nb_album != null ? html`<${Chakra.Text}><b>${formatNumber(artist.nb_album)}</b> Veröffentlichungen<//>` : null}
+          <//>
+          <${Chakra.Link} mt="2" display="inline-flex" alignItems="center" gap="1" href=${artist.link} isExternal color="accent" fontSize="sm" fontWeight="600">
+            Künstlerseite auf Deezer <${Icons.ExternalLinkIcon} />
+          <//>
+        <//>
+      <//>
+      ${deezer?.album ? html`
+        <${Chakra.HStack} mt="5" spacing="3" p="3" borderRadius="14px" bg="subtleBg">
+          <${TrackCover} src=${deezer.album.cover_small} size="56px" />
+          <${Chakra.Box} minW="0">
+            <${Chakra.Text} fontSize="xs" color="textMuted">${RECORD_TYPES[deezer.album.record_type] || 'Album'}${deezer.album.nb_tracks ? ` · ${deezer.album.nb_tracks} Titel` : ''}<//>
+            <${Chakra.Link} href=${deezer.album.link} isExternal fontWeight="700" noOfLines=${1}>${deezer.album.title}<//>
+            <${Chakra.Text} fontSize="xs" color="textMuted">
+              ${[deezer.album.label, deezer.album.release_date ? formatDate(deezer.album.release_date) : null, deezer.album.upc ? `UPC ${deezer.album.upc}` : null].filter(Boolean).join(' · ')}
+            <//>
+          <//>
+        <//>
+      ` : null}
+    <//>
+  `;
+}
+
+function SpellingsCard({ spellings }) {
+  if (!spellings?.length) return null;
+  return html`
+    <${PanelCard} title="Schreibweisen der Sender" subtitle="So liefern die Quellen diesen Titel – zusammengeführt zu einem Track" icon=${AppIcons.Tag}>
+      <${Chakra.VStack} align="stretch" spacing="2">
+        ${spellings.map((s, index) => html`
+          <${Chakra.HStack} key=${index} justify="space-between" spacing="3" px="3" py="2" borderRadius="12px" bg="subtleBg">
+            <${Chakra.Text} fontSize="sm" noOfLines=${1} fontFamily="mono">${s.artist_raw} – ${s.title_raw}<//>
+            <${Chakra.Text} fontSize="xs" color="textMuted" flexShrink="0">${formatNumber(s.plays)}× · ${s.stations} Sender<//>
+          <//>
+        `)}
+      <//>
+    <//>
+  `;
+}
+
+function TrackDetailApp({ trackKey }) {
   const defaultTo = berlinYesterdayIsoDate();
   const defaultFrom = shiftBerlinIsoDate(defaultTo, -29);
   const [from, setFrom] = React.useState(defaultFrom);
   const [to, setTo] = React.useState(defaultTo);
   const [bucket, setBucket] = React.useState('day');
-  const [includeToday, setIncludeToday] = React.useState(false);
+  const [includeToday, setIncludeToday] = React.useState(true);
 
   const [track, setTrack] = React.useState(null);
+  const [details, setDetails] = React.useState(null);
+  const [detailsLoading, setDetailsLoading] = React.useState(true);
+  const [detailsRefreshing, setDetailsRefreshing] = React.useState(false);
   const [totals, setTotals] = React.useState(null);
   const [trend, setTrend] = React.useState(null);
   const [seriesByStation, setSeriesByStation] = React.useState(null);
@@ -640,6 +930,20 @@ function TrackDetailApp({ trackKey }) {
   const effectiveTo = includeToday ? berlinTodayIsoDate() : to;
   const matrix = React.useMemo(() => buildDayStationMatrix(seriesByStation), [seriesByStation]);
   const dailyTrendRows = React.useMemo(() => buildDailyTrackTrendRows(seriesByStation, activeSenderSeries), [seriesByStation, activeSenderSeries]);
+
+  const loadDetails = React.useCallback(async (refresh = false) => {
+    if (refresh) setDetailsRefreshing(true);
+    else setDetailsLoading(true);
+    try {
+      const result = await apiFetch(`/api/tracks/${encodeURIComponent(trackKey)}/details${refresh ? '?refresh=1' : ''}`);
+      setDetails(result);
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDetailsLoading(false);
+      setDetailsRefreshing(false);
+    }
+  }, [trackKey]);
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -680,6 +984,11 @@ function TrackDetailApp({ trackKey }) {
   }, [trackKey, from, effectiveTo, bucket]);
 
   React.useEffect(() => { loadData(); }, [loadData]);
+  React.useEffect(() => { loadDetails(false); }, [loadDetails]);
+  React.useEffect(() => {
+    const name = details?.title || track?.title;
+    if (name) document.title = `${name} · RadioVelbert Music Scraper`;
+  }, [details, track]);
 
   const applyQuickRange = (rangeKey) => {
     const end = includeToday ? berlinTodayIsoDate() : berlinYesterdayIsoDate();
@@ -692,94 +1001,128 @@ function TrackDetailApp({ trackKey }) {
     setTo(end);
   };
 
-  const trackTitle = track ? `${track.artist} – ${track.title}` : trackKey;
   const maxTrackPlays = Number(track?.total_plays || 0);
+  const detailTotals = details?.totals;
+  // Placeholder instead of "0" / "–" while the song details are still loading.
+  const pendingValue = (value) => (detailsLoading && !details ? '…' : value);
 
-  return React.createElement(
-    AppShell,
-    {
-      activeKey: 'dashboard',
-      title: trackTitle,
-      subtitle: track ? `Track-Detail · ${from} bis ${effectiveTo}` : 'Lade...',
-      controls: React.createElement(Chakra.HStack, { spacing: '2' },
-        React.createElement(Chakra.Button, { size: 'sm', variant: 'ghost', leftIcon: React.createElement(Icons.ArrowBackIcon), onClick: () => window.history.back() }, 'Zurück'),
-        React.createElement(Chakra.Button, { size: 'sm', leftIcon: React.createElement(Icons.RepeatIcon), onClick: () => loadData(), isLoading: loading, colorScheme: 'blue' }, 'Aktualisieren')
-      )
-    },
-    React.createElement(Chakra.VStack, { align: 'stretch', spacing: '5' },
+  return html`
+    <${AppShell}
+      activeKey="dashboard"
+      title=${details?.title || track?.title || 'Song'}
+      subtitle=${details?.artist || track?.artist || 'Lade…'}
+      controls=${html`
+        <${Chakra.HStack} spacing="2">
+          <${Chakra.Button} size="sm" variant="ghost" leftIcon=${html`<${Icons.ArrowBackIcon} />`} onClick=${() => (window.history.length > 1 ? window.history.back() : navigate('/dashboard'))}>Zurück<//>
+          <${Chakra.Button} size="sm" leftIcon=${html`<${Icons.RepeatIcon} />`} onClick=${() => loadData()} isLoading=${loading} colorScheme="brand">Aktualisieren<//>
+        <//>
+      `}
+    >
+      <${Chakra.VStack} align="stretch" spacing="6">
+        ${errorText ? html`
+          <${Chakra.Alert} status="error" borderRadius="14px">
+            <${Chakra.AlertIcon} />
+            <${Chakra.Text}>${errorText}<//>
+          <//>
+        ` : null}
 
-      // Error
-      errorText ? React.createElement(Chakra.Alert, { status: 'error', borderRadius: '14px' },
-        React.createElement(Chakra.AlertIcon),
-        React.createElement(Chakra.Text, null, errorText)
-      ) : null,
+        <${TrackHero}
+          details=${details}
+          fallbackTrack=${track}
+          trackKey=${trackKey}
+          loading=${detailsLoading}
+          refreshing=${detailsRefreshing}
+          onRefresh=${() => loadDetails(true)}
+        />
 
-      // Date controls
-      React.createElement(PanelCard, { title: 'Zeitraum' },
-        React.createElement(Chakra.Wrap, { spacing: '3', align: 'end' },
-          React.createElement(Chakra.FormControl, { w: 'auto', minW: '120px' },
-            React.createElement(Chakra.FormLabel, { fontSize: 'sm' }, 'Aggregation'),
-            React.createElement(Chakra.Select, { size: 'sm', value: bucket, onChange: (e) => setBucket(e.target.value) },
-              React.createElement('option', { value: 'day' }, 'Tag'),
-              React.createElement('option', { value: 'week' }, 'Woche'),
-              React.createElement('option', { value: 'month' }, 'Monat'),
-              React.createElement('option', { value: 'year' }, 'Jahr')
-            )
-          ),
-          React.createElement(Chakra.FormControl, { w: 'auto' },
-            React.createElement(Chakra.FormLabel, { fontSize: 'sm' }, 'Von'),
-            React.createElement(Chakra.Input, { size: 'sm', type: 'date', value: from, onChange: (e) => setFrom(e.target.value) })
-          ),
-          React.createElement(Chakra.FormControl, { w: 'auto' },
-            React.createElement(Chakra.FormLabel, { fontSize: 'sm' }, 'Bis'),
-            React.createElement(Chakra.Input, { size: 'sm', type: 'date', value: to, onChange: (e) => setTo(e.target.value) })
-          ),
-          ...['7', '30', '90', 'ytd'].map((r) =>
-            React.createElement(Chakra.Button, { key: r, size: 'sm', variant: 'outline', onClick: () => applyQuickRange(r) }, r === 'ytd' ? 'YTD' : `${r}d`)
-          ),
-          React.createElement(Chakra.Checkbox, { isChecked: includeToday, onChange: (e) => setIncludeToday(e.target.checked), fontSize: 'sm' }, 'Heute'),
-          React.createElement(Chakra.Button, { colorScheme: 'blue', size: 'sm', onClick: () => loadData(), isLoading: loading }, 'Aktualisieren')
-        )
-      ),
+        <${Chakra.SimpleGrid} columns=${{ base: 2, xl: 4 }} spacing=${{ base: "3", md: "4" }}>
+          <${StatTile} accent label="Plays gesamt" value=${pendingValue(formatNumber(detailTotals?.total_plays ?? track?.total_plays ?? 0))} icon=${AppIcons.Activity} hint=${track?.plays_per_day ? `${Number(track.plays_per_day).toLocaleString('de-DE', { maximumFractionDigits: 1 })} pro aktivem Tag` : null} />
+          <${StatTile} label="Sender" value=${pendingValue(formatNumber(detailTotals?.station_count ?? 0))} icon=${AppIcons.Radio} hint="haben den Titel gespielt" />
+          <${StatTile} label="Erstes Play" value=${pendingValue(detailTotals?.first_played_at_utc ? formatDate(detailTotals.first_played_at_utc) : '–')} icon=${AppIcons.Calendar} hint=${detailTotals?.first_played_at_utc ? formatRelative(detailTotals.first_played_at_utc) : null} />
+          <${StatTile} label="Zuletzt gespielt" value=${pendingValue(detailTotals?.last_played_at_utc ? formatRelative(detailTotals.last_played_at_utc) : '–')} icon=${AppIcons.Clock} hint=${detailTotals?.last_played_at_utc ? formatDateTime(detailTotals.last_played_at_utc) : null} />
+        <//>
 
-      // Song-Performance
-      React.createElement(PanelCard, { title: 'Song-Performance' },
-        React.createElement(SongPerformanceCard, { selectedTrack: track, trend, totals, matrix, maxTrackPlays, from, to: effectiveTo })
-      ),
+        <${Chakra.SimpleGrid} columns=${{ base: 1, xl: 2 }} spacing="6">
+          <${StationsCard} stations=${details?.stations || []} total=${detailTotals?.total_plays || 0} loading=${detailsLoading && !details} />
+          <${RecentPlaysCard} plays=${details?.recentPlays || []} loading=${detailsLoading && !details} />
+        <//>
 
-      // Statistiken
-      React.createElement(PanelCard, { title: 'Statistikansichten', subtitle: 'Kumuliert · Zeitraum · Plays je Sender · Plays je Sender pro Tag' },
-        React.createElement(LegacyStatsCharts, { selectedTrack: track, from, to: effectiveTo, bucket, cumulativeSeries, bucketSeries, stationsByPlays, seriesByStation })
-      ),
+        ${details?.deezer?.artist || details?.spellings?.length ? html`
+          <${Chakra.SimpleGrid} columns=${{ base: 1, xl: 2 }} spacing="6">
+            <${ArtistCard} deezer=${details?.deezer} />
+            <${SpellingsCard} spellings=${details?.spellings} />
+          <//>
+        ` : null}
 
-      // Trend
-      React.createElement(PanelCard, { title: 'Trend Rohsumme vs. panelbereinigt', subtitle: 'Roh = absolute Plays · Bereinigt = Plays pro aktivem Sender je Tag' },
-        React.createElement(Chakra.Tabs, { variant: 'soft-rounded', colorScheme: 'blue', size: 'sm' },
-          React.createElement(Chakra.TabList, null,
-            React.createElement(Chakra.Tab, null, 'Rohsumme'),
-            React.createElement(Chakra.Tab, null, 'Panelbereinigt')
-          ),
-          React.createElement(Chakra.TabPanels, null,
-            React.createElement(Chakra.TabPanel, { px: '0', pb: '0' }, React.createElement(TrackTrendLineChart, { rows: dailyTrendRows, mode: 'raw' })),
-            React.createElement(Chakra.TabPanel, { px: '0', pb: '0' }, React.createElement(TrackTrendLineChart, { rows: dailyTrendRows, mode: 'normalized' }))
-          )
-        )
-      )
-    )
-  );
+        <${PanelCard} title="Zeitraum für Statistiken" icon=${AppIcons.Calendar}>
+          <${Chakra.Wrap} spacing="3" align="end">
+            <${Chakra.FormControl} w="auto" minW="120px">
+              <${Chakra.FormLabel} fontSize="sm">Aggregation<//>
+              <${Chakra.Select} size="sm" value=${bucket} onChange=${(e) => setBucket(e.target.value)}>
+                <option value="day">Tag</option>
+                <option value="week">Woche</option>
+                <option value="month">Monat</option>
+                <option value="year">Jahr</option>
+              <//>
+            <//>
+            <${Chakra.FormControl} w="auto">
+              <${Chakra.FormLabel} fontSize="sm">Von<//>
+              <${Chakra.Input} size="sm" type="date" value=${from} onChange=${(e) => setFrom(e.target.value)} />
+            <//>
+            <${Chakra.FormControl} w="auto">
+              <${Chakra.FormLabel} fontSize="sm">Bis<//>
+              <${Chakra.Input} size="sm" type="date" value=${to} onChange=${(e) => setTo(e.target.value)} isDisabled=${includeToday} />
+            <//>
+            <${Chakra.ButtonGroup} size="sm" isAttached variant="outline">
+              ${['7', '30', '90', 'ytd'].map((r) => html`<${Chakra.Button} key=${r} onClick=${() => applyQuickRange(r)}>${r === 'ytd' ? 'Jahr' : `${r} Tage`}<//>`)}
+            <//>
+            <${Chakra.Checkbox} isChecked=${includeToday} onChange=${(e) => setIncludeToday(e.target.checked)} colorScheme="brand">bis heute<//>
+          <//>
+        <//>
+
+        <${LoadingOverlay} isLoading=${loading} label="Statistiken werden berechnet…">
+        <${Chakra.VStack} align="stretch" spacing="6">
+        <${PanelCard} title="Song-Performance" subtitle="Score aus Beliebtheit, Momentum, Sender-Breite und Plays pro Tag" icon=${AppIcons.Zap}>
+          <${SongPerformanceCard} selectedTrack=${track} trend=${trend} totals=${totals} matrix=${matrix} maxTrackPlays=${maxTrackPlays} from=${from} to=${effectiveTo} />
+        <//>
+
+        <${PanelCard} title="Statistiken" subtitle="Kumuliert · Zeitraum · Plays je Sender · Plays je Sender pro Tag" icon=${AppIcons.Activity}>
+          <${LegacyStatsCharts} selectedTrack=${track} from=${from} to=${effectiveTo} bucket=${bucket} cumulativeSeries=${cumulativeSeries} bucketSeries=${bucketSeries} stationsByPlays=${stationsByPlays} seriesByStation=${seriesByStation} />
+        <//>
+
+        <${PanelCard} title="Trend: Rohsumme vs. panelbereinigt" subtitle="Roh = absolute Plays · Bereinigt = Plays pro aktivem Sender je Tag" icon=${AppIcons.Report}>
+          <${Chakra.Tabs} variant="soft-rounded" colorScheme="brand" size="sm">
+            <${Chakra.TabList}>
+              <${Chakra.Tab}>Rohsumme<//>
+              <${Chakra.Tab}>Panelbereinigt<//>
+            <//>
+            <${Chakra.TabPanels}>
+              <${Chakra.TabPanel} px="0" pb="0"><${TrackTrendLineChart} rows=${dailyTrendRows} mode="raw" /><//>
+              <${Chakra.TabPanel} px="0" pb="0"><${TrackTrendLineChart} rows=${dailyTrendRows} mode="normalized" /><//>
+            <//>
+          <//>
+        <//>
+        <//>
+        <//>
+      <//>
+    <//>
+  `;
 }
 
-// ── Root — router ─────────────────────────────────────────────────────────────
+// ── Root — client-side switch between catalogue and song page ────────────────
 
 function Root() {
-  const trackKey = new URLSearchParams(window.location.search).get('trackKey');
-  return React.createElement(
-    Chakra.ChakraProvider, { theme: horizonTheme },
-    trackKey
-      ? React.createElement(TrackDetailApp, { trackKey })
-      : React.createElement(DashboardApp)
-  );
+  const search = useLocationSearch();
+  const trackKey = new URLSearchParams(search).get('trackKey');
+  React.useEffect(() => {
+    if (!trackKey) document.title = 'Dashboard · RadioVelbert Music Scraper';
+  }, [trackKey]);
+  return html`
+    <${Chakra.ChakraProvider} theme=${horizonTheme}>
+      ${trackKey ? html`<${TrackDetailApp} key=${trackKey} trackKey=${trackKey} />` : html`<${DashboardApp} />`}
+    <//>
+  `;
 }
 
 const root = createRoot(document.getElementById('app'));
-root.render(React.createElement(Root));
+root.render(html`<${Root} />`);

@@ -1,7 +1,12 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { DateTime } from 'luxon';
-import { loadConfig } from './config.js';
+import { isLautfmStation, loadStationConfigs } from './stationStore.js';
+import { getSettings } from './settings.js';
+import { getStationStatus, markStationRunFinished, markStationRunStarted } from './stationStatus.js';
+import { hasTimeWindow, resolveSourceUrl, timeWindowStart } from './sourceUrl.js';
+import { runDisplayNameMaintenance, upsertTrackDisplay } from './displayNames.js';
+import { JsonGenericParser } from './parsers/jsonGeneric.js';
 import {
   isLikelyNoiseTrack,
   isLikelyJingleLike,
@@ -86,6 +91,8 @@ export function parserForStation(station) {
       return new LautfmJsonParser({ timezone: station.timezone });
     case 'radiomenu':
       return new RadioMenuParser({ timezone: station.timezone });
+    case 'json':
+      return new JsonGenericParser({ timezone: station.timezone, json: station.json });
     default:
       throw new Error(`Unsupported parser: ${station.parser}`);
   }
@@ -1684,6 +1691,17 @@ export async function runBackfillDeezer({
     }
 
     const correctedKey = deezerNormalized.trackKey;
+    if (!dryRun) {
+      // Keep Deezer's original spelling for display (the metadata row only stores normalized values).
+      upsertTrackDisplay(db, {
+        trackKey: correctedKey,
+        artistNorm: deezerNormalized.artist,
+        titleNorm: deezerNormalized.title,
+        artistSources: [deezerMatch.artist, artist],
+        titleSources: [deezerMatch.title, title],
+        source: 'deezer'
+      });
+    }
 
     // If the corrected key is the same as the existing key, just update metadata
     if (correctedKey === trackKey) {
@@ -1700,7 +1718,7 @@ export async function runBackfillDeezer({
           verification_confidence: existingMeta?.verification_confidence ?? null,
           external_track_id: existingMeta?.external_track_id ?? null,
           external_url: existingMeta?.external_url ?? null,
-          artwork_url: existingMeta?.artwork_url ?? null,
+          artwork_url: existingMeta?.artwork_url ?? deezerMatch.coverUrl ?? null,
           release_date_utc: existingMeta?.release_date_utc ?? null,
           genre: existingMeta?.genre ?? null,
           album: existingMeta?.album ?? null,
@@ -1779,7 +1797,7 @@ export async function runBackfillDeezer({
           verification_confidence: winnerMeta?.verification_confidence ?? null,
           external_track_id: winnerMeta?.external_track_id ?? null,
           external_url: winnerMeta?.external_url ?? null,
-          artwork_url: winnerMeta?.artwork_url ?? null,
+          artwork_url: winnerMeta?.artwork_url ?? deezerMatch.coverUrl ?? null,
           release_date_utc: winnerMeta?.release_date_utc ?? null,
           genre: winnerMeta?.genre ?? null,
           album: winnerMeta?.album ?? null,
@@ -1867,7 +1885,7 @@ export async function runBackfillDeezer({
           verification_confidence: existingMeta?.verification_confidence ?? null,
           external_track_id: existingMeta?.external_track_id ?? null,
           external_url: existingMeta?.external_url ?? null,
-          artwork_url: existingMeta?.artwork_url ?? null,
+          artwork_url: existingMeta?.artwork_url ?? deezerMatch.coverUrl ?? null,
           release_date_utc: existingMeta?.release_date_utc ?? null,
           genre: existingMeta?.genre ?? null,
           album: existingMeta?.album ?? null,
@@ -1917,11 +1935,123 @@ export async function runBackfillDeezer({
   return stats;
 }
 
-export async function runIngest({ configPath, dbPath, logger }) {
-  const config = loadConfig(configPath);
+// Fetches and parses one station: primary URL first, then fallbacks. URLs with {from}/{to}
+// placeholders get a time window (see sourceUrl.js). Shared by the ingest and the admin "Test" button.
+export async function fetchStationPlays(station, { logger, now = new Date(), lastSuccessAtUtc = null } = {}) {
+  const fetcher = fetcherForStation(station);
+  const parser = parserForStation(station);
+  const urlsToTry = [station.playlist_url, ...(station.fallback_urls ?? [])];
+  const windowFrom = timeWindowStart(now, { lookbackMinutes: station.lookback_minutes, lastSuccessAtUtc });
+  const attempts = [];
+
+  for (const template of urlsToTry) {
+    const url = hasTimeWindow(template)
+      ? resolveSourceUrl(template, { from: windowFrom, to: now, timezone: station.timezone })
+      : template;
+    try {
+      let parsed = [];
+      if (isPhonostarTitleUrl(url)) {
+        const maxPages = Math.max(1, Math.min(Number(process.env.YRPA_PHONOSTAR_MAX_PAGES) || 6, 20));
+        const paged = await fetchPhonostarPaginatedPlays({
+          fetcher,
+          parser,
+          url,
+          timezone: station.timezone,
+          maxPages
+        });
+        parsed = paged.plays;
+        if (parsed.length) {
+          logger?.info?.(
+            {
+              station: station.id,
+              url,
+              pagesFetched: paged.pagesFetched,
+              crossedDayBoundary: paged.crossedDayBoundary,
+              maxPages
+            },
+            'phonostar pagination parsed'
+          );
+        }
+      } else {
+        const html = await fetcher.fetchHtml(url);
+        parsed = parser.parse(html, url);
+      }
+
+      if (parsed.length > 0) {
+        attempts.push({ url, plays: parsed.length });
+        return { plays: parsed, usedUrl: url, attempts };
+      }
+      attempts.push({ url, plays: 0 });
+      logger?.warn?.({ station: station.id, url }, 'source fetched but parser found no plays');
+    } catch (sourceError) {
+      const sourceMessage = sourceError instanceof Error ? sourceError.message : String(sourceError);
+      attempts.push({ url, error: sourceMessage });
+      logger?.warn?.({ station: station.id, url, error: sourceMessage }, 'source fetch/parse failed, trying fallback');
+    }
+  }
+
+  const lastError = [...attempts].reverse().find((attempt) => attempt.error)?.error;
+  const error = new Error(
+    `No plays parsed from any configured source (${urlsToTry.length} url(s))${lastError ? `: ${lastError}` : ''}`
+  );
+  error.attempts = attempts;
+  error.empty = attempts.every((attempt) => !attempt.error);
+  throw error;
+}
+
+// Admin "Test": fetch + parse without writing anything.
+export async function previewStationSource(station, { logger } = {}) {
+  const startedAt = Date.now();
+  try {
+    const { plays, usedUrl, attempts } = await fetchStationPlays(station, { logger });
+    const sorted = [...plays].sort((a, b) => b.playedAt.getTime() - a.playedAt.getTime());
+    return {
+      ok: true,
+      usedUrl,
+      attempts,
+      total: plays.length,
+      coveredHours: coveredBerlinHours(plays, station.timezone),
+      newestPlayedAtUtc: sorted[0]?.playedAt.toISOString() ?? null,
+      oldestPlayedAtUtc: sorted[sorted.length - 1]?.playedAt.toISOString() ?? null,
+      durationMs: Date.now() - startedAt,
+      plays: sorted.slice(0, 25).map((play) => {
+        const normalized = normalizeArtistTitle(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id });
+        return {
+          playedAtUtc: play.playedAt.toISOString(),
+          artistRaw: play.artistRaw,
+          titleRaw: play.titleRaw,
+          artist: normalized.artist,
+          title: normalized.title,
+          noise: isLikelyNoiseTrack(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id })
+        };
+      })
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      attempts: error?.attempts ?? [],
+      durationMs: Date.now() - startedAt,
+      total: 0,
+      plays: []
+    };
+  }
+}
+
+export async function runIngest({ configPath, dbPath, stationIds = null, logger }) {
   const db = openDb(dbPath);
-  const trackHourStart = Number(process.env.YRPA_TRACK_HOUR_START ?? 6);
-  const trackHourEnd = Number(process.env.YRPA_TRACK_HOUR_END ?? 20);
+  const requestedIds = Array.isArray(stationIds) && stationIds.length ? new Set(stationIds) : null;
+  // Explicitly requested stations are fetched even when disabled (admin "Jetzt abrufen").
+  const stations = loadStationConfigs(db, configPath, { includeDisabled: Boolean(requestedIds) })
+    .filter((station) => !requestedIds || requestedIds.has(station.id));
+  if (!stations.length) {
+    db.close();
+    logger.warn({ stationIds }, 'no stations to ingest');
+    return { totalInserted: 0, scrapeErrors: [] };
+  }
+  const settings = getSettings(db);
+  const trackHourStart = settings.track_hour_start;
+  const trackHourEnd = settings.track_hour_end;
 
   let totalInserted = 0;
   const scrapeErrors = [];
@@ -1975,64 +2105,24 @@ export async function runIngest({ configPath, dbPath, logger }) {
     return identity;
   };
 
-  for (const station of config.stations) {
+  for (const station of stations) {
     upsertStation(db, station);
+    const stationStartedAt = Date.now();
+    markStationRunStarted(db, station.id);
 
     try {
-      const fetcher = fetcherForStation(station);
-      const parser = parserForStation(station);
-      const urlsToTry = [station.playlist_url, ...(station.fallback_urls ?? [])];
-      let plays = [];
-      let usedUrl = station.playlist_url;
-
-      for (const url of urlsToTry) {
-        try {
-          let parsed = [];
-          if (isPhonostarTitleUrl(url)) {
-            const maxPages = Math.max(1, Math.min(Number(process.env.YRPA_PHONOSTAR_MAX_PAGES) || 6, 20));
-            const paged = await fetchPhonostarPaginatedPlays({
-              fetcher,
-              parser,
-              url,
-              timezone: station.timezone,
-              maxPages
-            });
-            parsed = paged.plays;
-            if (parsed.length) {
-              logger.info(
-                {
-                  station: station.id,
-                  url,
-                  pagesFetched: paged.pagesFetched,
-                  crossedDayBoundary: paged.crossedDayBoundary,
-                  maxPages
-                },
-                'phonostar pagination parsed'
-              );
-            }
-          } else {
-            const html = await fetcher.fetchHtml(url);
-            parsed = parser.parse(html, url);
-          }
-
-          if (parsed.length > 0) {
-            plays = parsed;
-            usedUrl = url;
-            break;
-          }
-          logger.warn({ station: station.id, url }, 'source fetched but parser found no plays');
-        } catch (sourceError) {
-          const sourceMessage = sourceError instanceof Error ? sourceError.message : String(sourceError);
-          logger.warn({ station: station.id, url, error: sourceMessage }, 'source fetch/parse failed, trying fallback');
-        }
-      }
-
-      if (plays.length === 0) {
-        throw new Error(`No plays parsed from any configured source (${urlsToTry.length} url(s))`);
-      }
+      const fetched = await fetchStationPlays(station, {
+        logger,
+        lastSuccessAtUtc: getStationStatus(db, station.id)?.last_success_at_utc ?? null
+      });
+      let plays = fetched.plays;
+      const usedUrl = fetched.usedUrl;
+      const playsFetched = plays.length;
 
       const payloadCoveredHours = coveredBerlinHours(plays, station.timezone);
-      if (payloadCoveredHours < 12) {
+      // laut.fm and time-window sources deliver short windows by design.
+      const expectsFullDay = !isLautfmStation(station) && !hasTimeWindow(station.playlist_url);
+      if (expectsFullDay && payloadCoveredHours < 12) {
         logger.warn(
           { station: station.id, sourceUrl: usedUrl, playsFound: plays.length, coveredHours: payloadCoveredHours },
           'low hourly coverage in fetched payload (possible incomplete source window)'
@@ -2087,6 +2177,7 @@ export async function runIngest({ configPath, dbPath, logger }) {
       const dedupSamples = [];
       const ingestedAt = isoUtcNow();
       const verifiedByTrackKey = new Map();
+      const displayChecked = new Set();
 
       for (const play of plays) {
         const normalized = normalizeArtistTitle(play.artistRaw, play.titleRaw, {
@@ -2105,6 +2196,8 @@ export async function runIngest({ configPath, dbPath, logger }) {
         let canonicalTrackKey = normalized.trackKey;
         let canonicalArtist = normalized.artist;
         let canonicalTitle = normalized.title;
+        // Original Deezer spelling, only known right after a fresh API hit (the cache stores normalized values).
+        let deezerSpelling = null;
 
         // Deezer canonical correction — runs for every track when verification is enabled.
         // Uses DB-cached result to avoid repeated API calls within the cache window.
@@ -2136,6 +2229,7 @@ export async function runIngest({ configPath, dbPath, logger }) {
               // else: recently checked, no deezer match → leave deezerMatch null, skip API
             } else {
               deezerMatch = await searchTrackOnDeezer(normalized.artist, normalized.title).catch(() => null);
+              if (deezerMatch?.artist && deezerMatch?.title) deezerSpelling = deezerMatch;
             }
 
             if (deezerMatch?.artist && deezerMatch?.title) {
@@ -2156,7 +2250,7 @@ export async function runIngest({ configPath, dbPath, logger }) {
                     verification_confidence: null,
                     external_track_id: null,
                     external_url: null,
-                    artwork_url: null,
+                    artwork_url: deezerMatch.coverUrl ?? null,
                     release_date_utc: null,
                     genre: null,
                     album: null,
@@ -2301,6 +2395,18 @@ export async function runIngest({ configPath, dbPath, logger }) {
           ingested_at_utc: ingestedAt
         });
 
+        if (deezerSpelling || !displayChecked.has(canonicalTrackKey)) {
+          displayChecked.add(canonicalTrackKey);
+          upsertTrackDisplay(db, {
+            trackKey: canonicalTrackKey,
+            artistNorm: canonicalArtist,
+            titleNorm: canonicalTitle,
+            artistSources: [deezerSpelling?.artist, play.artistRaw].filter(Boolean),
+            titleSources: [deezerSpelling?.title, play.titleRaw].filter(Boolean),
+            source: deezerSpelling ? 'deezer' : 'raw'
+          });
+        }
+
         if (canonicalTitleKey && canonicalPrimaryArtist) {
           upsertCanonicalMap(db, {
             canonical_title: canonicalTitleKey,
@@ -2344,17 +2450,33 @@ export async function runIngest({ configPath, dbPath, logger }) {
         },
         'ingest complete'
       );
+      markStationRunFinished(db, station.id, {
+        status: 'ok',
+        sourceUrl: usedUrl,
+        playsFound: playsFetched,
+        playsInserted: inserted,
+        durationMs: Date.now() - stationStartedAt
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       scrapeErrors.push({ station: station.id, error: message });
       logger.error({ station: station.id, url: station.playlist_url, fetcher: station.fetcher, error: message }, 'station ingest failed');
+      try {
+        markStationRunFinished(db, station.id, {
+          status: error?.empty ? 'empty' : 'error',
+          error: message,
+          durationMs: Date.now() - stationStartedAt
+        });
+      } catch (statusError) {
+        logger.warn({ station: station.id, error: statusError instanceof Error ? statusError.message : String(statusError) }, 'station status update failed');
+      }
     }
   }
 
-  logger.info({ stations: config.stations.length, totalInserted, scrapeErrors: scrapeErrors.length }, 'ingest finished');
+  logger.info({ stations: stations.length, totalInserted, scrapeErrors: scrapeErrors.length }, 'ingest finished');
   db.close();
 
-  if (scrapeErrors.length === config.stations.length) {
+  if (scrapeErrors.length === stations.length) {
     throw new Error('All stations failed during ingest. Check network access, URLs, and parser settings.');
   }
 
@@ -2362,8 +2484,8 @@ export async function runIngest({ configPath, dbPath, logger }) {
 }
 
 export function runReport({ configPath, dbPath, weekStart, csv, gzip = false, gzipOnly = false, logger }) {
-  const config = loadConfig(configPath);
   const db = openDb(dbPath);
+  const config = { stations: loadStationConfigs(db, configPath, { includeDisabled: true }) };
   const ranges = buildWeekRanges(weekStart);
 
   const stationAnalytics = [];
@@ -2412,8 +2534,8 @@ export function runReport({ configPath, dbPath, weekStart, csv, gzip = false, gz
 }
 
 export function runStationReport({ configPath, dbPath, stationId, weekStart, gzip = false, gzipOnly = false, logger }) {
-  const config = loadConfig(configPath);
   const db = openDb(dbPath);
+  const config = { stations: loadStationConfigs(db, configPath, { includeDisabled: true }) };
   const ranges = buildWeekRanges(weekStart);
   const station = config.stations.find((s) => s.id === stationId);
   if (!station) {
@@ -2451,8 +2573,8 @@ export function runStationReport({ configPath, dbPath, stationId, weekStart, gzi
 }
 
 export function runDailyEvaluation({ configPath, dbPath, date, logger }) {
-  const config = loadConfig(configPath);
   const db = openDb(dbPath);
+  const config = { stations: loadStationConfigs(db, configPath, { includeDisabled: true }) };
   const day = date || berlinTodayIso();
   const range = buildDayRangeBerlin(day);
 
@@ -2507,8 +2629,8 @@ export function nextBerlinTime(hour = 23, minute = 0) {
 }
 
 export function runCoverageAudit({ configPath, dbPath, date, logger }) {
-  const config = loadConfig(configPath);
   const db = openDb(dbPath);
+  const config = { stations: loadStationConfigs(db, configPath) };
   const day = date || DateTime.now().setZone(BERLIN_TZ).minus({ days: 1 }).toISODate();
   const isCurrentBerlinDay = day === berlinTodayIso();
   const range = buildDayRangeBerlin(day);
@@ -2591,4 +2713,59 @@ export async function runAllMaintenance({ dbPath, releaseMaxLookups, logger }) {
     includeChart: false,
     logger
   });
+  runDisplayNamesMaintenance({ dbPath, logger });
+}
+
+export function runDisplayNamesMaintenance({ dbPath, logger }) {
+  const db = openDb(dbPath);
+  try {
+    return runDisplayNameMaintenance({ db, logger });
+  } finally {
+    db.close();
+  }
+}
+
+const CLEARABLE_TABLES = [
+  'plays',
+  'play_dedup_events',
+  'daily_track_stats',
+  'daily_overall_track_stats',
+  'daily_station_stats',
+  'track_metadata',
+  'track_display',
+  'track_enrichment',
+  'canonical_map'
+];
+
+// Admin "DB leeren". scope "all": every collected record (station configuration, settings, blocked tracks
+// and job history stay). scope "station": plays and statistics of one station. VACUUM gives the space back.
+export function clearDatabase({ dbPath, scope, stationId, logger }) {
+  const db = openDb(dbPath);
+  const deleted = {};
+  try {
+    if (scope === 'all') {
+      db.transaction(() => {
+        for (const table of CLEARABLE_TABLES) deleted[table] = db.prepare(`delete from ${table}`).run().changes;
+        db.prepare(`update station_status set last_success_at_utc = null, last_plays_found = null, last_plays_inserted = null,
+          consecutive_failures = 0, total_runs = 0, total_inserted = 0`).run();
+      })();
+    } else if (scope === 'station') {
+      if (!stationId) throw new Error('stationId fehlt');
+      db.transaction(() => {
+        for (const table of ['plays', 'play_dedup_events', 'daily_track_stats', 'daily_station_stats']) {
+          deleted[table] = db.prepare(`delete from ${table} where station_id = ?`).run(stationId).changes;
+        }
+        db.prepare(`update station_status set last_success_at_utc = null, total_runs = 0, total_inserted = 0 where station_id = ?`).run(stationId);
+      })();
+      // Overall daily stats can't be split by station; they are rebuilt by the next evaluation.
+    } else {
+      throw new Error(`Unknown scope: ${scope}`);
+    }
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.exec('VACUUM');
+    logger?.info?.({ scope, stationId: stationId ?? null, deleted }, 'database cleared');
+    return { scope, stationId: stationId ?? null, deleted };
+  } finally {
+    db.close();
+  }
 }
