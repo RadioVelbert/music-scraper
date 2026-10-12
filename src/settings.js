@@ -7,7 +7,9 @@ const SettingsSchema = z.object({
   default_refresh_minutes: z.number().int().min(1).max(1440),
   lautfm_refresh_minutes: z.number().int().min(1).max(1440),
   track_hour_start: z.number().int().min(0).max(23),
-  track_hour_end: z.number().int().min(0).max(23)
+  track_hour_end: z.number().int().min(0).max(23),
+  // Entries containing one of these terms (artist or title) are dropped at every station, e.g. own news/jingles.
+  noise_terms: z.array(z.string().trim().min(2).max(60)).max(50)
 });
 
 function envInt(name, fallback) {
@@ -21,7 +23,8 @@ export function defaultSettings() {
     default_refresh_minutes: 60,
     lautfm_refresh_minutes: 5,
     track_hour_start: envInt('YRPA_TRACK_HOUR_START', 6),
-    track_hour_end: envInt('YRPA_TRACK_HOUR_END', 20)
+    track_hour_end: envInt('YRPA_TRACK_HOUR_END', 20),
+    noise_terms: ['RadioVelbert']
   };
 }
 

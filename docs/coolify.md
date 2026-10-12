@@ -69,7 +69,7 @@ Das Volume bleibt bei Redeploys erhalten. **Nicht** unter *Persistent Storage* l
 
 Im Browser unter **Administration → Sender**: anlegen, testen, bearbeiten, pausieren, löschen. Das gilt sofort, ohne Deployment. Siehe [Sender hinzufügen](add-station.md).
 
-`config.yaml` wird nur beim allerersten Start in eine leere Datenbank übernommen. Später ergänzte Einträge lassen sich über **Sender → config.yaml importieren** nachziehen.
+`config.yaml` wird bei jedem Start abgeglichen: Neue Einträge werden angelegt, geänderte übernommen – solange der Sender nicht im Admin-Bereich bearbeitet wurde. Im Admin bearbeitete oder gelöschte Sender bleiben unverändert (der Admin-Bereich hat Vorrang). Ohne Deployment auslösen: **Sender → config.yaml abgleichen**.
 
 ### CLI-Befehle im Container
 

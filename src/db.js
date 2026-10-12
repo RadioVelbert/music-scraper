@@ -55,7 +55,9 @@ function ensureStationColumns(db) {
     enabled: 'integer not null default 1',
     created_at_utc: 'text',
     updated_at_utc: 'text',
-    sort_order: 'integer'
+    sort_order: 'integer',
+    // config.yaml entry as last imported; config_json === seed_json means "not edited in the admin area"
+    seed_json: 'text'
   };
   for (const [name, type] of Object.entries(required)) {
     if (!existing.has(name)) db.exec(`alter table stations add column ${name} ${type}`);

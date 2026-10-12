@@ -108,7 +108,7 @@ npm install
 
 ### Konfiguration
 
-Sender werden im Browser unter **Administration → Sender** verwaltet. `config.yaml` enthält die Startliste, die beim ersten Start in eine leere Datenbank übernommen wird – siehe [Sender hinzufügen](docs/add-station.md).
+Sender werden im Browser unter **Administration → Sender** verwaltet. `config.yaml` wird bei jedem Start abgeglichen (neue und geänderte Einträge), im Admin bearbeitete Sender haben Vorrang – siehe [Sender hinzufügen](docs/add-station.md).
 
 Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 
@@ -366,7 +366,7 @@ Die Confidence-Gewichtung: Titel 45 %, Primary-Artist 25 %, Artist-Overlap 20 %,
 | `dlf_nova` | Deutschlandfunk Nova |
 | `nrwlokalradios_json` | NRW Lokalradios (JSON-API) |
 | `lautfm_json` | laut.fm-Sender (Abruf alle 5 Minuten) |
-| `json` | Beliebige JSON-API mit Feld-Mapping und Zeitfenster-Platzhaltern |
+| `json` | Beliebige JSON-API mit Feld-Mapping, Zeitfenster- und Limit-Platzhaltern, optional Deezer-ID/ISRC/Cover (z. B. RadioVelbert-API, NRW Lokalradios) |
 | `radiomenu` | radio.menu-Sender (z.B. Capital FM) |
 | `generic_html` | Generisches HTML-Parsing |
 | `generic_html_or_onlineradiobox` | Automatische Erkennung |

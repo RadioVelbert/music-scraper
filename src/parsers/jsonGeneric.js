@@ -31,6 +31,18 @@ export function parseTimeValue(raw, format, timezone) {
   return dt?.isValid ? dt.toUTC().toJSDate() : null;
 }
 
+// Relative cover paths ("/artwork/407.webp") are resolved against the API URL.
+function absoluteUrl(value, baseUrl) {
+  const text = asText(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text, baseUrl);
+    return /^https?:$/.test(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function asText(value) {
   if (value == null) return '';
   if (typeof value === 'object') return '';
@@ -52,7 +64,10 @@ export class JsonGenericParser extends BaseParser {
       throw new Error('Antwort ist kein gültiges JSON');
     }
 
-    const { items_path, artist_path, title_path, time_path, time_format, filter_path, filter_value, split_separator } = this.options;
+    const {
+      items_path, artist_path, title_path, time_path, time_format, filter_path, filter_value, split_separator,
+      isrc_path, deezer_id_path, artwork_path
+    } = this.options;
     let items = getPath(payload, items_path);
     if (items && !Array.isArray(items) && typeof items === 'object') items = [items];
     if (!Array.isArray(items)) {
@@ -81,7 +96,11 @@ export class JsonGenericParser extends BaseParser {
       const key = `${playedAt.toISOString()}|${artistRaw}|${titleRaw}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      plays.push({ playedAt, artistRaw, titleRaw, sourceUrl });
+      const play = { playedAt, artistRaw, titleRaw, sourceUrl };
+      if (isrc_path) play.isrc = asText(getPath(item, isrc_path)).toUpperCase() || null;
+      if (deezer_id_path) play.deezerId = asText(getPath(item, deezer_id_path)) || null;
+      if (artwork_path) play.artworkUrl = absoluteUrl(getPath(item, artwork_path), sourceUrl);
+      plays.push(play);
     }
     return plays;
   }

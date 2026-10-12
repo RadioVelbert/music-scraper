@@ -47,6 +47,10 @@ export function saveStationConfig(db, input, { isNew = false, enabled } = {}) {
   if (isNew && existing?.config_json) {
     throw new Error(`Ein Sender mit der ID "${station.id}" existiert bereits.`);
   }
+  if (isNew) {
+    const deleted = deletedStationIds(db);
+    if (deleted.delete(station.id)) writeDeletedStationIds(db, deleted);
+  }
   const now = isoUtcNow();
   const enabledValue = enabled ?? inputEnabled ?? (existing ? existing.enabled !== 0 : true);
 
@@ -110,12 +114,34 @@ export function setStationEnabled(db, id, enabled) {
   return getStationConfig(db, id);
 }
 
+// Stations deleted in the admin area are remembered, so the config.yaml sync doesn't bring them back.
+const DELETED_KEY = 'deleted_station_ids';
+
+function deletedStationIds(db) {
+  try {
+    const row = db.prepare('select value_json from app_settings where key = ?').get(DELETED_KEY);
+    return new Set(row ? JSON.parse(row.value_json) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDeletedStationIds(db, ids) {
+  db.prepare(`
+    insert into app_settings(key, value_json, updated_at_utc) values (?, ?, ?)
+    on conflict(key) do update set value_json = excluded.value_json, updated_at_utc = excluded.updated_at_utc
+  `).run(DELETED_KEY, JSON.stringify([...ids].sort()), isoUtcNow());
+}
+
 // deleteData=false keeps the plays and only removes the configuration (station is no longer scraped).
 export function deleteStation(db, id, { deleteData = false } = {}) {
   const row = db.prepare('select id from stations where id = ?').get(id);
   if (!row) throw new Error(`Unbekannter Sender: ${id}`);
   let deletedPlays = 0;
   db.transaction(() => {
+    const deleted = deletedStationIds(db);
+    deleted.add(id);
+    writeDeletedStationIds(db, deleted);
     if (deleteData) {
       deletedPlays = db.prepare('delete from plays where station_id = ?').run(id).changes;
       db.prepare('delete from play_dedup_events where station_id = ?').run(id);
@@ -145,9 +171,71 @@ export function importStationsFromConfig(db, configPath, { onlyIfEmpty = false }
       continue;
     }
     saveStationConfig(db, station, { enabled: true });
+    db.prepare('update stations set seed_json = ? where id = ?').run(JSON.stringify(station), station.id);
     imported += 1;
   }
   return { imported, skipped };
+}
+
+function withoutMyStation(json) {
+  try {
+    const { my_station: _ignored, ...rest } = JSON.parse(json);
+    return JSON.stringify(rest);
+  } catch {
+    return null;
+  }
+}
+
+// Applies config.yaml on every start:
+// - new entries are imported (unless the station was deleted in the admin area),
+// - changed entries are updated as long as the station was not edited in the admin area
+//   (config_json still equals the last imported entry; my_station is compared separately because
+//   choosing "Mein Sender" elsewhere unsets it on the previous station),
+// - stations edited or deleted in the admin area are left alone.
+export function syncStationsFromConfig(db, configPath) {
+  const result = { imported: 0, updated: 0, unchanged: 0, keptAdminChanges: 0, skippedDeleted: 0 };
+  if (!configPath || !fs.existsSync(configPath)) return result;
+  const config = loadConfig(configPath);
+  const deleted = deletedStationIds(db);
+  const select = db.prepare('select id, config_json, seed_json, enabled from stations where id = ?');
+  const setSeed = db.prepare('update stations set seed_json = ? where id = ?');
+
+  db.transaction(() => {
+    for (const station of config.stations) {
+      const seed = JSON.stringify(station);
+      const row = select.get(station.id);
+      if (!row?.config_json) {
+        if (deleted.has(station.id)) {
+          result.skippedDeleted += 1;
+          continue;
+        }
+        saveStationConfig(db, station, { enabled: true });
+        setSeed.run(seed, station.id);
+        result.imported += 1;
+        continue;
+      }
+      if (row.seed_json === seed) {
+        result.unchanged += 1;
+        continue;
+      }
+      // Stations imported before seeds were tracked (seed_json null) count as unedited.
+      const untouched = row.seed_json == null || withoutMyStation(row.config_json) === withoutMyStation(row.seed_json);
+      if (!untouched) {
+        result.keptAdminChanges += 1;
+        continue;
+      }
+      const current = JSON.parse(row.config_json);
+      const previousSeed = row.seed_json ? JSON.parse(row.seed_json) : null;
+      // my_station from config.yaml only wins when it was changed there.
+      const myStationChangedInYaml = !previousSeed || Boolean(previousSeed.my_station) !== Boolean(station.my_station);
+      saveStationConfig(db, { ...station, my_station: myStationChangedInYaml ? station.my_station : Boolean(current.my_station) }, {
+        enabled: row.enabled !== 0
+      });
+      setSeed.run(seed, station.id);
+      result.updated += 1;
+    }
+  })();
+  return result;
 }
 
 // Stations used by ingest/report/evaluation. Seeds an empty database from config.yaml first.

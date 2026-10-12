@@ -8,6 +8,7 @@ import { hasTimeWindow, resolveSourceUrl, timeWindowStart } from './sourceUrl.js
 import { runDisplayNameMaintenance, upsertTrackDisplay } from './displayNames.js';
 import { JsonGenericParser } from './parsers/jsonGeneric.js';
 import {
+  compactTerm,
   isLikelyNoiseTrack,
   isLikelyJingleLike,
   normalizeArtistTitle,
@@ -499,6 +500,14 @@ export function runTrackOrientationMaintenance({
 export function runNoisePlayCleanup({ dbPath, dryRun = false, logger }) {
   const db = openDb(dbPath);
   const combinedExpr = "lower(coalesce(p.artist_raw, '') || ' ' || coalesce(p.title_raw, '') || ' ' || coalesce(p.artist, '') || ' ' || coalesce(p.title, ''))";
+  // Blocked terms from the settings also remove matching plays that were stored before the term was added.
+  const blockedTerms = getSettings(db).noise_terms;
+  const compactExpr = `replace(replace(replace(replace(${combinedExpr}, ' ', ''), '-', ''), '_', ''), '.', '')`;
+  const blockedConditions = blockedTerms
+    .map(compactTerm)
+    .filter((term) => term.length >= 2 && /^[a-z0-9]+$/.test(term))
+    .map((term) => `or ${compactExpr} like '%${term}%'`)
+    .join('\n      ');
   const candidates = db.prepare(`
     select
       p.id,
@@ -563,6 +572,7 @@ export function runNoisePlayCleanup({ dbPath, dryRun = false, logger }) {
       or ${combinedExpr} like '%baden-württemberg%'
       or ${combinedExpr} like '%berlin%'
       or ${combinedExpr} glob '*[0-9]*'
+      ${blockedConditions}
   `).all();
 
   const toDelete = [];
@@ -572,7 +582,8 @@ export function runNoisePlayCleanup({ dbPath, dryRun = false, logger }) {
     const title = row.title_raw || row.title || '';
     const isNoise = isLikelyNoiseTrack(artist, title, {
       stationName: row.station_name || '',
-      stationId: row.station_id || ''
+      stationId: row.station_id || '',
+      blockedTerms
     });
     const isJingle = isLikelyJingleLike(artist, title, {
       stationName: row.station_name || '',
@@ -2000,7 +2011,7 @@ export async function fetchStationPlays(station, { logger, now = new Date(), las
 }
 
 // Admin "Test": fetch + parse without writing anything.
-export async function previewStationSource(station, { logger } = {}) {
+export async function previewStationSource(station, { logger, blockedTerms = [] } = {}) {
   const startedAt = Date.now();
   try {
     const { plays, usedUrl, attempts } = await fetchStationPlays(station, { logger });
@@ -2022,7 +2033,10 @@ export async function previewStationSource(station, { logger } = {}) {
           titleRaw: play.titleRaw,
           artist: normalized.artist,
           title: normalized.title,
-          noise: isLikelyNoiseTrack(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id })
+          noise: isLikelyNoiseTrack(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id, blockedTerms }),
+          isrc: play.isrc ?? null,
+          deezerId: play.deezerId ?? null,
+          artworkUrl: play.artworkUrl ?? null
         };
       })
     };
@@ -2185,7 +2199,7 @@ export async function runIngest({ configPath, dbPath, stationIds = null, logger 
           stationId: station.id
         });
         if (
-          isLikelyNoiseTrack(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id }) ||
+          isLikelyNoiseTrack(play.artistRaw, play.titleRaw, { stationName: station.name, stationId: station.id, blockedTerms: settings.noise_terms }) ||
           normalized.artist.length < 2 ||
           normalized.title.length < 2
         ) {
@@ -2215,7 +2229,17 @@ export async function runIngest({ configPath, dbPath, stationIds = null, logger 
               metaIsRecent && cachedMeta?.canonical_source === 'deezer';
 
             let deezerMatch = null;
-            if (metaIsRecent) {
+            if (play.deezerId && !cachedDeezerHit) {
+              // The source already delivers the Deezer identity (e.g. RadioVelbert API): no search needed.
+              deezerMatch = {
+                artist: play.artistRaw,
+                title: play.titleRaw,
+                deezerId: String(play.deezerId),
+                isrc: play.isrc ?? null,
+                coverUrl: play.artworkUrl ?? null
+              };
+              deezerSpelling = deezerMatch;
+            } else if (metaIsRecent) {
               // Within cache window: reconstruct from cached values if source is deezer,
               // otherwise skip the API call entirely (track was recently checked, no match found)
               if (cachedDeezerHit) {

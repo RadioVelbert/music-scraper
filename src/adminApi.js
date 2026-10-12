@@ -9,7 +9,7 @@ import {
   setStationOrder,
   STATION_ORDER_SQL,
   deleteStation,
-  importStationsFromConfig,
+  syncStationsFromConfig,
   isLautfmStation
 } from './stationStore.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -169,7 +169,8 @@ const SettingsPatchSchema = z.object({
   default_refresh_minutes: z.number().int().min(1).max(1440).optional(),
   lautfm_refresh_minutes: z.number().int().min(1).max(1440).optional(),
   track_hour_start: z.number().int().min(0).max(23).optional(),
-  track_hour_end: z.number().int().min(0).max(23).optional()
+  track_hour_end: z.number().int().min(0).max(23).optional(),
+  noise_terms: z.array(z.string().trim().min(2).max(60)).max(50).optional()
 });
 
 function errorMessage(error) {
@@ -260,7 +261,7 @@ export function registerAdminRoutes(app, { db, dbPath, configPath, logger, jobs,
     const { enabled: _enabled, ...config } = req.body ?? {};
     // Validate like a save, but with a placeholder id/name so unsaved forms can be tested.
     const station = StationSchema.parse({ id: 'test', name: 'Test', ...config });
-    return previewStationSource(station, { logger });
+    return previewStationSource(station, { logger, blockedTerms: getSettings(db).noise_terms });
   }));
 
   app.post('/api/admin/stations/:id/run', handle((req) => {
@@ -273,8 +274,8 @@ export function registerAdminRoutes(app, { db, dbPath, configPath, logger, jobs,
   }));
 
   app.post('/api/admin/stations/import-config', handle(() => {
-    const result = importStationsFromConfig(db, configPath);
-    logger.info(result, 'stations imported from config');
+    const result = syncStationsFromConfig(db, configPath);
+    logger.info(result, 'stations synced from config');
     return result;
   }));
 

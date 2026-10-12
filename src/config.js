@@ -26,7 +26,11 @@ export const JsonSourceSchema = z.object({
   filter_path: z.string().trim().optional().default(''),
   filter_value: z.string().trim().optional().default(''),
   // Used when artist_path is empty and the title field contains "Artist - Title"
-  split_separator: z.string().optional().default(' - ')
+  split_separator: z.string().optional().default(' - '),
+  // Optional extras some APIs deliver (e.g. RadioVelbert): exact identity without a Deezer search, cover art.
+  isrc_path: z.string().trim().optional().default(''),
+  deezer_id_path: z.string().trim().optional().default(''),
+  artwork_path: z.string().trim().optional().default('')
 });
 
 export const StationSchema = z.object({

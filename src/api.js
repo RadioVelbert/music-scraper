@@ -20,7 +20,7 @@ import {
 import { BERLIN_TZ, buildWeekRanges } from './time.js';
 import { buildTrackSeries, buildTrackSeriesByStation, buildTrackTotals } from './trends.js';
 import { runDailyEvaluation, runManualTrackMerge, deleteAndBlockTrack } from './services.js';
-import { listStationConfigs, getStationConfig, importStationsFromConfig, saveStationConfig } from './stationStore.js';
+import { listStationConfigs, getStationConfig, importStationsFromConfig, saveStationConfig, syncStationsFromConfig } from './stationStore.js';
 import { applyDisplayNames } from './displayNames.js';
 import { getTrackDetails, getTrackPreview } from './trackDetails.js';
 import { createJobRunner, createJobCatalog, initScheduler } from './jobs.js';
@@ -1634,7 +1634,9 @@ export async function startApiServer({ configPath, dbPath, port = 8787, startupJ
   const controlDb = openDb(dbPath, { busyTimeoutMs: 3000 });
   ACTIVE_API_DBS.add(controlDb);
   registerApiDbHooks(logger);
-  importStationsFromConfig(controlDb, configPath, { onlyIfEmpty: true });
+  // config.yaml changes (new or edited entries) are applied on every start unless edited in the admin area.
+  const sync = syncStationsFromConfig(controlDb, configPath);
+  logger.info(sync, 'stations synced from config');
 
   const jobs = createJobRunner({ db: controlDb, logger });
   const catalog = createJobCatalog({ jobs, configPath, dbPath });

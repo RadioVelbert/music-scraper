@@ -57,10 +57,28 @@ const JSON_DEFAULTS = {
   time_format: 'iso',
   filter_path: '',
   filter_value: '',
-  split_separator: ' - '
+  split_separator: ' - ',
+  isrc_path: '',
+  deezer_id_path: '',
+  artwork_path: ''
 };
 
 const JSON_PRESETS = [
+  {
+    key: 'radiovelbert',
+    label: 'RadioVelbert API (mit Deezer-ID, ISRC und Cover)',
+    // Max. 200 Einträge; {limit:200} holt nur so viele Songs, wie seit dem letzten Abruf nötig sind.
+    url: 'https://api.radiovelbert.de/api/songs/history?limit={limit:200}',
+    lookback: 90,
+    json: {
+      ...JSON_DEFAULTS,
+      items_path: 'data',
+      time_path: 'last_played',
+      isrc_path: 'isrc',
+      deezer_id_path: 'deezer_id',
+      artwork_path: 'artwork'
+    }
+  },
   {
     key: 'nrw_window',
     label: 'NRW Lokalradios – Zeitfenster (z. B. Radio Neandertal)',
@@ -371,6 +389,15 @@ function JsonMappingFields({ form, setJson }) {
           <${Chakra.Input} size="sm" fontFamily="mono" placeholder="Wert" value=${json.filter_value} onChange=${(e) => setJson({ filter_value: e.target.value })} />
         <//>
       <//>
+      <${Field} label="Feld Deezer-ID (optional)" help="Wenn vorhanden, wird der Titel ohne Deezer-Suche exakt zugeordnet.">
+        <${Chakra.Input} size="sm" fontFamily="mono" placeholder="z. B. deezer_id" value=${json.deezer_id_path} onChange=${(e) => setJson({ deezer_id_path: e.target.value })} />
+      <//>
+      <${Field} label="Feld ISRC / Cover (optional)" help="Cover-Pfade dürfen relativ sein (/artwork/1.webp).">
+        <${Chakra.HStack}>
+          <${Chakra.Input} size="sm" fontFamily="mono" placeholder="isrc" value=${json.isrc_path} onChange=${(e) => setJson({ isrc_path: e.target.value })} />
+          <${Chakra.Input} size="sm" fontFamily="mono" placeholder="artwork" value=${json.artwork_path} onChange=${(e) => setJson({ artwork_path: e.target.value })} />
+        <//>
+      <//>
     <//>
   `;
 }
@@ -400,15 +427,26 @@ function TestResult({ result }) {
         <${Chakra.TableContainer} maxH="280px" overflowY="auto" className="horizon-scroll">
           <${Chakra.Table} size="sm">
             <${Chakra.Thead} position="sticky" top="0" bg="cardBg">
-              <${Chakra.Tr}><${Chakra.Th}>Zeit<//><${Chakra.Th}>Interpret<//><${Chakra.Th}>Titel<//><${Chakra.Th}><//><//>
+              <${Chakra.Tr}><${Chakra.Th}>Zeit<//><${Chakra.Th}>Interpret<//><${Chakra.Th}>Titel<//><${Chakra.Th}>${result.plays.some((p) => p.isrc || p.deezerId) ? 'Zuordnung' : ''}<//><//>
             <//>
             <${Chakra.Tbody}>
               ${result.plays.map((play, index) => html`
                 <${Chakra.Tr} key=${index} opacity=${play.noise ? 0.5 : 1}>
                   <${Chakra.Td} fontSize="xs" whiteSpace="nowrap">${formatDateTime(play.playedAtUtc)}<//>
-                  <${Chakra.Td} fontSize="sm">${play.artistRaw}<//>
+                  <${Chakra.Td} fontSize="sm">
+                    <${Chakra.HStack} spacing="2">
+                      ${play.artworkUrl ? html`<${Chakra.Image} src=${play.artworkUrl} boxSize="28px" borderRadius="6px" objectFit="cover" />` : null}
+                      <span>${play.artistRaw}</span>
+                    <//>
+                  <//>
                   <${Chakra.Td} fontSize="sm">${play.titleRaw}<//>
-                  <${Chakra.Td}>${play.noise ? html`<${Chakra.Badge} colorScheme="orange">Wird gefiltert<//>` : null}<//>
+                  <${Chakra.Td}>
+                    ${play.noise
+                      ? html`<${Chakra.Badge} colorScheme="orange">Wird gefiltert<//>`
+                      : play.deezerId
+                        ? html`<${Chakra.Tooltip} label=${`Deezer-ID ${play.deezerId}${play.isrc ? ` · ISRC ${play.isrc}` : ''}`}><${Chakra.Badge} colorScheme="green">Deezer<//><//>`
+                        : play.isrc ? html`<${Chakra.Badge} colorScheme="green">ISRC<//>` : null}
+                  <//>
                 <//>
               `)}
             <//>
@@ -478,7 +516,7 @@ function StationEditor({ isOpen, onClose, initial, settings, onSaved }) {
   const applyPreset = (key) => {
     const preset = JSON_PRESETS.find((p) => p.key === key);
     if (!preset) return;
-    update({ playlist_url: preset.url, json: { ...preset.json } });
+    update({ playlist_url: preset.url, json: { ...preset.json }, ...(preset.lookback ? { lookback_minutes: preset.lookback } : {}) });
   };
 
   return html`
@@ -554,7 +592,7 @@ function StationEditor({ isOpen, onClose, initial, settings, onSaved }) {
                   label="Playlist-URL"
                   isRequired
                   help=${form.sourceType === 'json' || form.sourceType === 'html'
-                    ? html`<span>Platzhalter für Zeitfenster-APIs: <code>{from:yyyy-MM-dd HH:mm:ss}</code>, <code>{to:yyyy-MM-dd HH:mm:ss}</code>, <code>{from_iso}</code>, <code>{to_unix}</code>. Das Fenster umfasst die Rückschau und holt nach einem Ausfall bis zu 48 h nach.</span>`
+                    ? html`<span>Platzhalter für Zeitfenster-APIs: <code>{from:yyyy-MM-dd HH:mm:ss}</code>, <code>{to:yyyy-MM-dd HH:mm:ss}</code>, <code>{from_iso}</code>, <code>{to_unix}</code>. Für „letzte N Titel“-APIs: <code>{limit:200}</code> – so viele Titel wie seit dem letzten Abruf nötig, höchstens 200. Das Fenster umfasst die Rückschau und holt nach einem Ausfall bis zu 48 h nach.</span>`
                     : null}
                 >
                   <${Chakra.Input} size="sm" fontFamily="mono" value=${form.playlist_url} onChange=${(e) => update({ playlist_url: e.target.value })} placeholder="https://…" />
@@ -938,7 +976,11 @@ function StationsTab({ data, reload, onRunStation }) {
     setImporting(true);
     try {
       const result = await apiSend('/api/admin/stations/import-config', 'POST');
-      toast({ status: 'success', title: 'Import abgeschlossen', description: `${result.imported} neu, ${result.skipped} schon vorhanden` });
+      toast({
+        status: 'success',
+        title: 'Abgleich abgeschlossen',
+        description: `${result.imported} neu, ${result.updated} aktualisiert, ${result.unchanged} unverändert${result.keptAdminChanges ? `, ${result.keptAdminChanges} mit Admin-Änderungen beibehalten` : ''}`
+      });
       reload();
     } catch (error) {
       toastError('Import fehlgeschlagen', error);
@@ -959,8 +1001,8 @@ function StationsTab({ data, reload, onRunStation }) {
             <${Chakra.Tooltip} label="Reihenfolge alphabetisch nach Namen setzen">
               <${Chakra.Button} size="sm" variant="ghost" onClick=${sortAlphabetically} isDisabled=${Boolean(pendingOrder)}>A–Z<//>
             <//>
-            <${Chakra.Tooltip} label="Sender aus config.yaml übernehmen, die noch fehlen">
-              <${Chakra.Button} size="sm" variant="ghost" onClick=${importConfig} isLoading=${importing}>config.yaml importieren<//>
+            <${Chakra.Tooltip} label="Neue und geänderte Einträge aus config.yaml übernehmen (passiert auch bei jedem Start). Im Admin bearbeitete oder gelöschte Sender bleiben unverändert.">
+              <${Chakra.Button} size="sm" variant="ghost" onClick=${importConfig} isLoading=${importing}>config.yaml abgleichen<//>
             <//>
             <${Chakra.Button} size="sm" colorScheme="brand" leftIcon=${html`<${AppIcons.Plus} />`} onClick=${() => openEditor(null)}>Sender hinzufügen<//>
           <//>
@@ -1155,12 +1197,17 @@ function SettingsTab({ data, reload }) {
   const toastError = useToastError();
   // The overview is polled every 5s; only reset the form when the stored settings actually change.
   const settingsKey = JSON.stringify(data.settings);
-  React.useEffect(() => setValues(data.settings), [settingsKey]);
+  const [noiseText, setNoiseText] = React.useState((data.settings.noise_terms || []).join('\n'));
+  React.useEffect(() => {
+    setValues(data.settings);
+    setNoiseText((data.settings.noise_terms || []).join('\n'));
+  }, [settingsKey]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await apiSend('/api/admin/settings', 'PUT', values);
+      const noiseTerms = String(noiseText).split('\n').map((term) => term.trim()).filter((term) => term.length >= 2);
+      await apiSend('/api/admin/settings', 'PUT', { ...values, noise_terms: noiseTerms });
       toast({ status: 'success', title: 'Einstellungen gespeichert' });
       reload();
     } catch (error) {
@@ -1193,6 +1240,13 @@ function SettingsTab({ data, reload }) {
           <${Field} label="laut.fm-Intervall (Minuten)" help="laut.fm hält nur die letzten 10 Titel vor. Standard: 5">${numberField('lautfm_refresh_minutes', 1, 1440)}<//>
           <${Field} label="Erfassung ab (Uhr, Ortszeit des Senders)" help="Plays davor werden nicht gespeichert.">${numberField('track_hour_start', 0, 23)}<//>
           <${Field} label="Erfassung bis (Uhr, einschließlich)" help="20 = bis 20:59 Uhr.">${numberField('track_hour_end', 0, 23)}<//>
+        <//>
+        <${Chakra.Divider} />
+        <${Field}
+          label="Immer ausfiltern"
+          help="Ein Begriff pro Zeile. Einträge, deren Interpret oder Titel einen Begriff enthält, werden bei allen Sendern verworfen – unabhängig von Groß-/Kleinschreibung, Leerzeichen und Bindestrichen („RadioVelbert“ trifft auch „Radio Velbert“). Bereits gespeicherte Treffer entfernt die nächste Wartung."
+        >
+          <${Chakra.Textarea} size="sm" rows=${4} maxW="420px" fontFamily="mono" value=${noiseText} onChange=${(e) => setNoiseText(e.target.value)} placeholder="RadioVelbert" />
         <//>
         <${Chakra.HStack}>
           <${Chakra.Button} colorScheme="brand" onClick=${save} isLoading=${saving}>Speichern<//>

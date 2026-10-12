@@ -2,7 +2,7 @@
 
 Sender werden im Browser verwaltet: **Administration → Sender → Sender hinzufügen**. Änderungen gelten sofort, ohne Neustart oder Deployment.
 
-`config.yaml` wird nur beim allerersten Start in eine leere Datenbank übernommen. Danach ist die Datenbank die Quelle. Neue Einträge aus `config.yaml` lassen sich jederzeit über **Sender → config.yaml importieren** nachziehen (vorhandene Sender werden dabei nicht verändert).
+`config.yaml` wird bei jedem Start abgeglichen: Neue Einträge werden angelegt, geänderte übernommen – solange der Sender nicht im Admin-Bereich bearbeitet wurde. Im Admin bearbeitete oder gelöschte Sender bleiben unverändert (der Admin-Bereich hat Vorrang). Manuell auslösen: **Sender → config.yaml abgleichen**.
 
 ---
 
@@ -41,6 +41,8 @@ Der JSON-Parser bildet beliebige Playlist-APIs ab. Feldpfade nutzen Punkt-Notati
 | Feld Zeitpunkt | | `timeslot_iso` |
 | Zeitformat | `iso`, `unix`, `unix_ms` oder ein [Luxon-Format](https://moment.github.io/luxon/#/formatting?id=table-of-tokens) | `yyyy-MM-dd HH:mm:ss ZZZ` |
 | Filter | Nur Einträge, deren Feld diesen Wert hat | `type` = `song` |
+| Deezer-ID (optional) | Titel wird ohne Deezer-Suche exakt zugeordnet | `deezer_id` |
+| ISRC / Cover (optional) | Cover-Pfade dürfen relativ sein (`/artwork/1.webp`) | `isrc`, `artwork` |
 
 Zeitangaben ohne Zeitzone werden in der Zeitzone des Senders interpretiert.
 
@@ -53,6 +55,7 @@ Manche APIs liefern Titel für einen Zeitraum. Platzhalter in der URL werden bei
 | `{from:yyyy-MM-dd HH:mm:ss}` / `{to:…}` | Beginn/Ende im angegebenen Format (Ortszeit des Senders) |
 | `{from_iso}` / `{to_iso}` | ISO 8601 |
 | `{from_unix}` / `{to_unix}` | Unix-Sekunden (`_unix_ms` für Millisekunden) |
+| `{limit:200}` | Für „letzte N Titel“-APIs: so viele Titel, wie seit dem letzten Abruf nötig sind (ca. 1 pro 2 Minuten), höchstens die angegebene API-Grenze |
 
 Das Fenster umfasst die **Rückschau** (Standard 180 Minuten, im Sender-Dialog unter „Erweitert“ einstellbar). War der Sender länger nicht erreichbar, wird automatisch ab dem letzten erfolgreichen Abruf nachgeholt, höchstens 48 Stunden. Beim ersten Abruf werden die letzten 24 Stunden geholt. Doppelte Einträge aus überlappenden Fenstern werden erkannt.
 
@@ -63,6 +66,14 @@ https://www.radioneandertal.de/playlist/title?station=live&req_station=29&datefr
 ```
 
 Mapping: Feld Interpret `artist`, Feld Titel `title`, Feld Zeitpunkt `timeslot_iso`, Zeitformat `iso`. Andere NRW-Lokalradios funktionieren genauso; nur Domain und `req_station` ändern sich.
+
+Beispiel **RadioVelbert** (eigene API, Vorlage „RadioVelbert API“ im Sender-Dialog):
+
+```
+https://api.radiovelbert.de/api/songs/history?limit={limit:200}
+```
+
+Die API liefert höchstens 200 Einträge (ca. 10 Stunden), hält aber 30 Tage vor. Bei stündlichem Abruf mit 90 Minuten Rückschau werden nur etwa 45 Titel geholt; nach einem Ausfall entsprechend mehr, höchstens 200. Deezer-ID, ISRC und Cover kommen direkt mit: Mapping Liste `data`, Zeitpunkt `last_played`, Deezer-ID `deezer_id`, ISRC `isrc`, Cover `artwork`.
 
 ---
 
@@ -78,9 +89,11 @@ Mapping: Feld Interpret `artist`, Feld Titel `title`, Feld Zeitpunkt `timeslot_i
 
 Erfasst werden nur Titel zwischen 06:00 und 20:59 Uhr Ortszeit des Senders. Das Zeitfenster ist unter **Administration → Einstellungen** änderbar.
 
+Unter **Einstellungen → Immer ausfiltern** stehen Begriffe, die nie Musik sind (Standard: `RadioVelbert`). Enthält Interpret oder Titel einen davon, wird der Eintrag bei allen Sendern verworfen – auch „Radio Velbert“ oder „RADIO-VELBERT Lokalnachrichten“. Bereits gespeicherte Treffer entfernt die nächste Wartung.
+
 ---
 
-## config.yaml (Startwerte)
+## config.yaml
 
 Format eines Eintrags (alle Felder wie im Sender-Dialog):
 
@@ -88,21 +101,24 @@ Format eines Eintrags (alle Felder wie im Sender-Dialog):
 stations:
   - id: "radiovelbert"
     name: "RadioVelbert"
-    playlist_url: "https://api.laut.fm/station/radiovelbert/last_songs"
-    parser: "lautfm_json"            # onlineradiobox | lautfm_json | json | nrwlokalradios_json | dlf_nova | fluxfm | radiomenu | generic_html | generic_html_or_onlineradiobox
+    playlist_url: "https://api.radiovelbert.de/api/songs/history?limit={limit:200}"
+    parser: "json"                   # onlineradiobox | lautfm_json | json | nrwlokalradios_json | dlf_nova | fluxfm | radiomenu | generic_html | generic_html_or_onlineradiobox
     fetcher: "http"                  # http | playwright
     timezone: "Europe/Berlin"
     # optional:
-    refresh_minutes: 5               # eigenes Intervall
-    lookback_minutes: 180            # Rückschau für {from}/{to}
+    refresh_minutes: 60              # eigenes Intervall (sonst Standard aus den Einstellungen)
+    lookback_minutes: 90             # Rückschau für {from}/{to}/{limit}
     fallback_urls: []
-    my_station: false
+    my_station: true
     json:                            # nur für parser: "json"
-      items_path: ""
+      items_path: "data"
       artist_path: "artist"
       title_path: "title"
-      time_path: "timeslot_iso"
+      time_path: "last_played"
       time_format: "iso"
+      deezer_id_path: "deezer_id"    # optional
+      isrc_path: "isrc"              # optional
+      artwork_path: "artwork"        # optional
 ```
 
 Die ID darf nur Kleinbuchstaben, Ziffern, `_` und `-` enthalten und kann später nicht geändert werden.

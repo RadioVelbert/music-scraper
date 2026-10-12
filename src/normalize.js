@@ -441,10 +441,30 @@ function looksLikeEventScheduleLine(artistRaw, titleRaw) {
   return false;
 }
 
-export function isLikelyNoiseTrack(artistRaw, titleRaw, { stationName = '', stationId = '' } = {}) {
+// Lowercase letters/digits only, so "Radio Velbert", "radio-velbert" and "RadioVelbert" compare equal.
+export function compactTerm(value) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+// Settings "Immer ausfiltern": entries whose artist or title contains one of these terms are never music.
+export function matchesBlockedTerm(artistRaw, titleRaw, blockedTerms = []) {
+  const terms = blockedTerms.map(compactTerm).filter((term) => term.length >= 2);
+  if (!terms.length) return false;
+  const artist = compactTerm(artistRaw);
+  const title = compactTerm(titleRaw);
+  return terms.some((term) => artist.includes(term) || title.includes(term));
+}
+
+export function isLikelyNoiseTrack(artistRaw, titleRaw, { stationName = '', stationId = '', blockedTerms = [] } = {}) {
   const artist = String(artistRaw ?? '');
   const title = String(titleRaw ?? '');
   const combined = `${artist} ${title}`.toLowerCase();
+
+  if (matchesBlockedTerm(artist, title, blockedTerms)) return true;
 
   if (!artist.trim() || !title.trim()) return true;
   if (UNKNOWN_TRACK_PATTERN.test(artist.trim()) || UNKNOWN_TRACK_PATTERN.test(title.trim())) return true;

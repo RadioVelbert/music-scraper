@@ -307,9 +307,20 @@ stations:
 
   - id: "radiovelbert"
     name: "RadioVelbert"
-    # laut.fm only keeps the last 10 songs, so laut.fm stations are fetched every 5 minutes.
-    playlist_url: "https://api.laut.fm/station/radiovelbert/last_songs"
-    parser: "lautfm_json"
+    # Own API (max. 200 entries ≈ 10 h). {limit:200} fetches only as many songs as needed since the last run;
+    # Deezer ID, ISRC and cover come with the data, so no Deezer search is needed.
+    playlist_url: "https://api.radiovelbert.de/api/songs/history?limit={limit:200}"
+    parser: "json"
+    json:
+      items_path: "data"
+      artist_path: "artist"
+      title_path: "title"
+      time_path: "last_played"
+      time_format: "iso"
+      deezer_id_path: "deezer_id"
+      isrc_path: "isrc"
+      artwork_path: "artwork"
+    lookback_minutes: 90
     fetcher: "http"
     timezone: "Europe/Berlin"
     my_station: true
