@@ -5,6 +5,11 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # The RadioVelbert API runs on the same Coolify server. Calling the server's own public IP from a
+    # container times out (no hairpin NAT), so the domain is resolved to the Docker host instead; the
+    # Coolify proxy on the host answers with the regular TLS certificate.
+    extra_hosts:
+      - "api.radiovelbert.de:host-gateway"
     # Direct access via http://<server-ip>:8787 (plain HTTP, bypasses Coolify's proxy).
     # Remove this block once a domain with ":8787" is configured in Coolify.
     ports:
