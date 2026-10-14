@@ -6,9 +6,10 @@
 
 import { chromium } from 'playwright-core';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const BASE = 'http://localhost:8787';
-const OUT  = '/Users/gabrielbecker/Documents/Codex/Music Scraper/docs/screenshots';
+const OUT  = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots');
 const VIEWPORT = { width: 1440, height: 900 };
 
 async function makePage(browser, dark) {

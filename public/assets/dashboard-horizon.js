@@ -81,13 +81,6 @@ function dayLabel(period) {
   return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
 }
 
-function fmtDateOnly(iso) {
-  if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return String(iso);
-  return date.toLocaleDateString('de-DE');
-}
-
 function dayCount(fromIso, toIso) {
   const start = Date.parse(`${fromIso}T12:00:00.000Z`);
   const end = Date.parse(`${toIso}T12:00:00.000Z`);

@@ -13,7 +13,5 @@ tests
 .env
 .env.*
 *.log
-*.command
-capital_menu.html
 docker-compose.yaml
 .DS_Store

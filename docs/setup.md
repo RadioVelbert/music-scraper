@@ -70,22 +70,15 @@ Browser öffnen:
 | Seite | URL |
 |---|---|
 | Dashboard | `http://localhost:8787/dashboard` |
-| Statistik | `http://localhost:8787/tracks` |
 | Neue Titel | `http://localhost:8787/new-titles` |
 | Mein Sender | `http://localhost:8787/my-station` |
 | Wochenberichte | `http://localhost:8787/weekly-reports` |
+| Radio-Charts | `http://localhost:8787/charts/radio` |
+| Billboard 200 | `http://localhost:8787/charts/billboard` |
+| Administration | `http://localhost:8787/admin` |
 | API Docs | `http://localhost:8787/api/docs` |
 
 > Der Server startet einen internen Cron der stündlich automatisch neue Daten einliest. Kein externer Cronjob nötig.
-
----
-
-## macOS: Doppelklick-Start
-
-Für den täglichen Betrieb ohne Terminal:
-
-1. **`setup-music-scraper.command`** — einmalig ausführen (installiert Abhängigkeiten)
-2. **`start-music-scraper-api.command`** — startet Server + Dashboard
 
 ---
 

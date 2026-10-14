@@ -49,20 +49,3 @@ export function shiftBerlinIsoDate(isoDate, days) {
   return berlinIsoDate(base);
 }
 
-export function berlinYear(date = new Date()) {
-  return Number(partsFor(date).year);
-}
-
-export function weekStartBerlinIso(date = new Date()) {
-  const currentIso = berlinIsoDate(date);
-  const berlinDate = parseIsoDate(currentIso);
-  if (!berlinDate) return currentIso;
-  const weekday = (berlinDate.getUTCDay() + 6) % 7;
-  berlinDate.setUTCDate(berlinDate.getUTCDate() - weekday);
-  return berlinIsoDate(berlinDate);
-}
-
-export function clampIsoDate(value, fallback) {
-  return parseIsoDate(value) ? String(value) : fallback;
-}
-

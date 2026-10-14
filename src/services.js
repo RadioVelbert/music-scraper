@@ -14,8 +14,7 @@ import {
   normalizeArtistTitle,
   canonicalTitleKey,
   primaryArtist,
-  artistSet,
-  artistOverlapRatioLoose
+  artistSet
 } from './normalize.js';
 import {
   openDb,
@@ -23,7 +22,6 @@ import {
   insertPlayIgnore,
   insertDedupEvent,
   getStationTrackCounts,
-  getStationTrackCountsWithMetadata,
   getStationTotalPlays,
   getStationPlayedAtUtc,
   getOverallTrackCounts,
@@ -163,15 +161,6 @@ async function fetchPhonostarPaginatedPlays({ fetcher, parser, url, timezone, ma
   return { plays: collected, pagesFetched, crossedDayBoundary };
 }
 
-function parseIsoDate(value, label) {
-  if (!value) return null;
-  const dt = DateTime.fromISO(value, { zone: BERLIN_TZ }).startOf('day');
-  if (!dt.isValid) {
-    throw new Error(`Invalid ${label} date: ${value}`);
-  }
-  return dt;
-}
-
 function textLooksLikeArtist(value) {
   const text = String(value || '').toLowerCase();
   if (!text) return false;
@@ -296,14 +285,6 @@ function isProperTokenSubset(subset, superset) {
     if (!superset.has(token)) return false;
   }
   return true;
-}
-
-function trackStableIdentity(metaRow) {
-  const isrc = String(metaRow?.isrc ?? '').trim().toLowerCase();
-  if (isrc) return { kind: 'isrc', key: `isrc:${isrc}` };
-  const external = String(metaRow?.external_track_id ?? '').trim().toLowerCase();
-  if (external) return { kind: 'external', key: `external:${external}` };
-  return { kind: 'none', key: null };
 }
 
 /**
@@ -2644,13 +2625,6 @@ export function runDailyEvaluation({ configPath, dbPath, date, logger }) {
   db.close();
   logger.info({ dateBerlin: day, tracks: overall.length }, 'daily evaluation completed');
   return { dateBerlin: day, tracks: overall.length };
-}
-
-export function nextBerlinTime(hour = 23, minute = 0) {
-  const now = DateTime.now().setZone(BERLIN_TZ);
-  let next = now.set({ hour, minute, second: 0, millisecond: 0 });
-  if (next <= now) next = next.plus({ days: 1 });
-  return next;
 }
 
 export function runCoverageAudit({ configPath, dbPath, date, logger }) {

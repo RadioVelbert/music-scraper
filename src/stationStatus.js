@@ -1,9 +1,5 @@
 import { isoUtcNow } from './time.js';
 
-export function getStationStatus(db, stationId) {
-  return db.prepare('select * from station_status where station_id = ?').get(stationId) ?? null;
-}
-
 export function listStationStatuses(db) {
   return db.prepare('select * from station_status').all();
 }

@@ -4,8 +4,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { openDb, upsertStation, insertPlayIgnore, upsertTrackMetadata } from '../src/db.js';
-import { normalizeArtistTitle } from '../src/normalize.js';
 
 const tmpDirs = [];
 
@@ -25,22 +23,6 @@ function runCli(projectRoot, cwd, args) {
 
 function toDataHtmlUrl(html) {
   return `data:text/html,${encodeURIComponent(html)}`;
-}
-
-function addPlayDirect(db, { stationId, playedAtUtcIso, artistRaw, titleRaw }) {
-  const normalized = normalizeArtistTitle(artistRaw, titleRaw);
-  insertPlayIgnore(db, {
-    station_id: stationId,
-    played_at_utc: playedAtUtcIso,
-    artist_raw: artistRaw,
-    title_raw: titleRaw,
-    artist: normalized.artist,
-    title: normalized.title,
-    track_key: normalized.trackKey,
-    source_url: 'https://example.test',
-    ingested_at_utc: '2026-02-23T10:00:00.000Z'
-  });
-  return normalized.trackKey;
 }
 
 afterEach(() => {

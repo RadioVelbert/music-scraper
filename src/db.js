@@ -215,34 +215,6 @@ export function getStationTrackCounts(db, stationId, startUtcIso, endUtcIso) {
   return stmt.all(stationId, startUtcIso, endUtcIso);
 }
 
-export function getStationTrackCountsWithMetadata(db, stationId, startUtcIso, endUtcIso) {
-  const stmt = dbQueries(db).prepare('getStationTrackCountsWithMetadata', `
-    select
-      p.track_key,
-      min(p.artist) as artist,
-      min(p.title) as title,
-      count(*) as count,
-      count(distinct substr(p.played_at_utc, 1, 10)) as active_days,
-      min(p.played_at_utc) as first_played_at_utc,
-      max(p.played_at_utc) as last_played_at_utc,
-      min(m.release_date_utc) as release_date_utc,
-      min(m.verification_confidence) as verification_confidence,
-      min(m.verified_exists) as verified_exists,
-      min(m.external_url) as external_url,
-      min(m.preview_url) as preview_url,
-      min(m.genre) as genre,
-      min(m.album) as album
-    from plays p
-    left join track_metadata m on m.track_key = p.track_key
-    where p.station_id = ?
-      and p.played_at_utc >= ?
-      and p.played_at_utc < ?
-    group by p.track_key
-    order by count desc, artist asc, title asc
-  `);
-  return stmt.all(stationId, startUtcIso, endUtcIso);
-}
-
 export function getStationTotalPlays(db, stationId, startUtcIso, endUtcIso) {
   const stmt = dbQueries(db).prepare('getStationTotalPlays', `
     select count(*) as total
