@@ -440,6 +440,16 @@ function DashboardApp() {
     }
   }, [debouncedSearch, stationId, trackLimit]);
 
+  const copyTrackMeta = async (artist, title) => {
+    const text = `${artist} – ${title}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ status: 'success', title: 'Kopiert', description: text, duration: 2000 });
+    } catch {
+      toast({ status: 'warning', title: 'Kopieren nicht möglich', description: text });
+    }
+  };
+
   const deleteTrack = async (trackKey, artistTitle) => {
     if (!window.confirm(`"${artistTitle}" wirklich löschen und dauerhaft blockieren?\n\nDieser Track wird aus allen Plays entfernt und nie mehr gespeichert.`)) return;
     try {
@@ -569,6 +579,16 @@ function DashboardApp() {
                         <${Chakra.Box} minW="0">
                           <${Chakra.Text} fontWeight="700" fontSize="sm" color="textPrimary" noOfLines=${1}>${row.title}<//>
                           <${Chakra.Text} fontSize="sm" color="textMuted" noOfLines=${1}>${row.artist}<//>
+                        <//>
+                        <${Chakra.Tooltip} label="Titel & Interpret kopieren">
+                          <${Chakra.IconButton}
+                            size="xs"
+                            variant="ghost"
+                            flexShrink="0"
+                            aria-label="Titel & Interpret kopieren"
+                            icon=${html`<${Icons.CopyIcon} boxSize="3" />`}
+                            onClick=${(e) => { e.stopPropagation(); copyTrackMeta(row.artist, row.title); }}
+                          />
                         <//>
                       <//>
                     <//>
