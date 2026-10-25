@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
+import { schedule as scheduleCron } from './cronSchedule.js';
 import { BERLIN_TZ, isoUtcNow } from './time.js';
 import { getSettings } from './settings.js';
 import { effectiveRefreshMinutes, listStationConfigs } from './stationStore.js';
@@ -303,8 +304,6 @@ export function stationDueInfo(station, status, settings, now = Date.now()) {
 }
 
 export function initScheduler({ jobs, catalog, db, logger }) {
-  const cron = require('node-cron');
-
   const checkDueStations = () => {
     try {
       const settings = getSettings(db);
@@ -335,10 +334,10 @@ export function initScheduler({ jobs, catalog, db, logger }) {
   };
 
   const tasks = {
-    dueCheck: cron.schedule(SCHEDULES.dueCheck, checkDueStations, { timezone: BERLIN_TZ }),
-    maintenance: cron.schedule(SCHEDULES.maintenance, whenEnabled(() => catalog.maintenance()), { timezone: BERLIN_TZ }),
-    charts: cron.schedule(SCHEDULES.charts, whenEnabled(() => catalog.charts()), { timezone: BERLIN_TZ }),
-    daily: cron.schedule(SCHEDULES.daily, whenEnabled(() => catalog.daily()), { timezone: BERLIN_TZ })
+    dueCheck: scheduleCron(SCHEDULES.dueCheck, checkDueStations, { timezone: BERLIN_TZ, logger }),
+    maintenance: scheduleCron(SCHEDULES.maintenance, whenEnabled(() => catalog.maintenance()), { timezone: BERLIN_TZ, logger }),
+    charts: scheduleCron(SCHEDULES.charts, whenEnabled(() => catalog.charts()), { timezone: BERLIN_TZ, logger }),
+    daily: scheduleCron(SCHEDULES.daily, whenEnabled(() => catalog.daily()), { timezone: BERLIN_TZ, logger })
   };
   logger.info({ ...SCHEDULES, timezone: BERLIN_TZ }, 'scheduler initialised');
 
