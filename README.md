@@ -115,6 +115,7 @@ Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 
 | Variable | Beschreibung | Standard |
 |---|---|---|
+| `ADMIN_TOKEN` | Token für den Admin-Bereich (`/api/admin/*`, `/api/jobs/*`). Leer = offen. Die Oberfläche fragt das Token einmal ab und merkt es sich im Browser | — |
 | `SPOTIFY_CLIENT_ID` | Spotify API Client-ID | — |
 | `SPOTIFY_CLIENT_SECRET` | Spotify API Client-Secret | — |
 | `YRPA_VERIFY_ALL_TRACKS` | Alle Tracks gegen iTunes/Spotify prüfen (statt nur verdächtige) | `0` |
@@ -122,7 +123,6 @@ Optionale Umgebungsvariablen (`.env` oder Shell-Export):
 | `YRPA_DEDUP_COOLDOWN_SECONDS` | Cooldown-Fenster für Dedup in Sekunden | `900` |
 | `YRPA_TRACK_HOUR_START` / `YRPA_TRACK_HOUR_END` | Startwert für das Erfassungsfenster (danach in der Administration einstellbar) | `6` / `20` |
 | `LOG_LEVEL` | Pino Log-Level (`info`, `debug`, …) | `info` |
-| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Login für Dashboard und API (beide gesetzt = aktiv; `/api/health` bleibt offen) | — |
 | `DB_PATH` | Standard für `--db` | `music-scraper.sqlite` (`api`: `yrpa.sqlite`) |
 | `CONFIG_PATH` | Standard für `--config` | — |
 | `REPORTS_DIR` | Ausgabeordner für Reports | `reports` |

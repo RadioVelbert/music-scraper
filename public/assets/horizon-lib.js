@@ -178,13 +178,67 @@ function setPendingRequests(delta) {
   requestListeners.forEach((listener) => listener());
 }
 
+// Admin token (env ADMIN_TOKEN on the server): sent to /api/admin and /api/jobs, asked for once and kept in this browser.
+const ADMIN_TOKEN_KEY = 'rv.adminToken';
+const isAdminUrl = (url) => /^\/api\/(admin|jobs)(\/|\?|$)/.test(String(url));
+let adminPrompt = null;
+let adminPromptDeclinedAt = 0;
+
+function readAdminToken() {
+  try {
+    return window.localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeAdminToken(token) {
+  try {
+    if (token) window.localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    // storage unavailable: the token is just asked for again next time
+  }
+}
+
+export function clearAdminToken() {
+  writeAdminToken('');
+}
+
+// One prompt at a time; after "Abbrechen" it stays quiet for a while so parallel requests don't re-prompt.
+function requestAdminToken(invalid) {
+  if (Date.now() - adminPromptDeclinedAt < 30000) return Promise.resolve('');
+  if (!adminPrompt) {
+    adminPrompt = Promise.resolve().then(() => {
+      const entered = window.prompt(invalid ? 'Das Admin-Token wurde abgelehnt. Bitte erneut eingeben:' : 'Für diese Aktion wird das Admin-Token benötigt:');
+      const token = String(entered || '').trim();
+      if (token) writeAdminToken(token);
+      else adminPromptDeclinedAt = Date.now();
+      return token;
+    }).finally(() => { adminPrompt = null; });
+  }
+  return adminPrompt;
+}
+
 // options.silent: background polling that should not show the loading bar.
 export async function apiFetch(url, options = {}) {
   const { silent = false, ...fetchOptions } = options || {};
   if (!silent) setPendingRequests(1);
   try {
-    const res = await fetch(url, fetchOptions);
-    const body = await res.json().catch(() => ({}));
+    const send = (token) => fetch(url, token && isAdminUrl(url)
+      ? { ...fetchOptions, headers: { ...(fetchOptions.headers || {}), 'X-Admin-Token': token } }
+      : fetchOptions);
+    const stored = isAdminUrl(url) ? readAdminToken() : '';
+    let res = await send(stored);
+    let body = await res.json().catch(() => ({}));
+    // Up to three tries: a rejected token is dropped and asked for again.
+    for (let attempt = 0; res.status === 401 && body.code === 'admin_token_required' && attempt < 3; attempt += 1) {
+      const token = await requestAdminToken(Boolean(stored) || attempt > 0);
+      if (!token) break;
+      res = await send(token);
+      body = await res.json().catch(() => ({}));
+      if (res.status === 401) writeAdminToken('');
+    }
     if (!res.ok) {
       throw new Error(body.error || `HTTP ${res.status}`);
     }

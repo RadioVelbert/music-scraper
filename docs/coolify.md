@@ -27,11 +27,10 @@ Music Scraper läuft in Coolify als **ein** Docker-Compose-Service. Das Repo bri
 
    Das `:8787` ist **Pflicht** – es sagt dem Coolify-Proxy, auf welchen Container-Port er weiterleiten soll. Öffentlich bleibt die Seite unter `https://musik.example.de` (Port 443) erreichbar. Ohne eigene Domain erzeugt Coolify automatisch eine (über `SERVICE_URL_APP_8787` in der Compose-Datei).
 
-   **Ohne Domain (Test über IP):** Die Compose-Datei veröffentlicht Port 8787 direkt auf dem Server, die App ist also auch unter `http://<server-ip>:8787` erreichbar. Dafür muss Port 8787 in der Firewall des Hosters offen sein. Das ist unverschlüsseltes HTTP, das Login-Passwort geht also im Klartext übers Netz. Sobald eine Domain eingerichtet ist, den `ports:`-Block aus `docker-compose.yaml` entfernen.
+   **Ohne Domain (Test über IP):** Die Compose-Datei veröffentlicht Port 8787 direkt auf dem Server, die App ist also auch unter `http://<server-ip>:8787` erreichbar. Dafür muss Port 8787 in der Firewall des Hosters offen sein. Das ist unverschlüsseltes HTTP. Sobald eine Domain eingerichtet ist, den `ports:`-Block aus `docker-compose.yaml` entfernen.
 
 4. **Umgebungsvariablen prüfen** (Tab *Environment Variables*):
-   - `SERVICE_PASSWORD_APP` – von Coolify generiert, das ist das **Login-Passwort** fürs Dashboard
-   - `BASIC_AUTH_USER` – Login-Name, Standard `radio`
+   - `ADMIN_TOKEN` – schützt den Admin-Bereich (siehe unten). Leer = ohne Schutz
    - optional `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`
 
 5. **Deploy** klicken.
@@ -126,8 +125,7 @@ Den Container-Namen zeigt `docker ps | grep app-`. Den Befehl kann man als Cronj
 
 | Variable | Beschreibung | Standard im Container |
 |---|---|---|
-| `BASIC_AUTH_USER` | Login-Name. Leer = kein Login | `radio` |
-| `BASIC_AUTH_PASSWORD` | Login-Passwort. In Coolify = `SERVICE_PASSWORD_APP` | generiert |
+| `ADMIN_TOKEN` | Token für den Admin-Bereich (Administration, Löschen, Merge, Jobs). Leer = offen | — |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Spotify-API (optional) | — |
 | `YRPA_VERIFY_ALL_TRACKS` | Alle Tracks gegen iTunes/Spotify prüfen | `1` |
 | `YRPA_TRACK_VERIFY` | Track-Verifikation (`0` = aus) | `1` |
@@ -150,7 +148,7 @@ docker build -t music-scraper .
 docker run --rm -p 8787:8787 -v music-scraper-data:/data music-scraper
 ```
 
-→ <http://localhost:8787> (ohne Login, weil keine Auth-Variablen gesetzt sind).
+→ <http://localhost:8787> (ohne Login).
 
 ---
 
@@ -159,9 +157,6 @@ docker run --rm -p 8787:8787 -v music-scraper-data:/data music-scraper
 **„No Available Server" / 404 vom Proxy**
 - Fehlt `:8787` im Domain-Feld? Ohne Port leitet Coolify auf Port 80 weiter.
 - Ist der Container *healthy*? Coolify leitet erst weiter, wenn der Healthcheck (`/api/health`) einmal erfolgreich war – nach dem Start ca. 10 Sekunden.
-
-**Browser fragt dauernd nach Login**
-Benutzer = `BASIC_AUTH_USER`, Passwort = Wert von `SERVICE_PASSWORD_APP` in den Environment Variables.
 
 **Nach einem Deploy sind alle Daten weg**
 - Build Pack muss *Docker Compose* sein. Mit *Nixpacks* oder *Dockerfile* fehlt das Volume aus der Compose-Datei.

@@ -12,10 +12,8 @@ services:
     environment:
       # Coolify generates a domain and routes it to container port 8787 (changeable under "Domains").
       - SERVICE_URL_APP_8787
-      # Basic Auth for dashboard + admin API. Coolify generates the password (Environment Variables → SERVICE_PASSWORD_APP).
-      # Auth is disabled when user or password is empty.
-      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-radio}
-      - BASIC_AUTH_PASSWORD=${SERVICE_PASSWORD_APP}
+      # Protects the admin area (/api/admin, /api/jobs). Empty = open. Set it under Environment Variables in Coolify.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}

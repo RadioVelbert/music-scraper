@@ -1,5 +1,5 @@
-import path from 'node:path';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { createRequire } from 'node:module';
@@ -1610,27 +1610,17 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
   return handlers;
 }
 
-// Optional HTTP Basic Auth for public deployments. /api/health stays open for container health checks.
-function createBasicAuthMiddleware({ user, password, realm = 'Music Scraper' }) {
+// Admin area (/api/admin/*, /api/jobs/*) is protected by the ADMIN_TOKEN env var. Not set = open (local development).
+// The token is accepted as "X-Admin-Token: <token>" or "Authorization: Bearer <token>".
+export function createAdminTokenMiddleware(token) {
   // Compare fixed-length digests so timingSafeEqual neither throws on length mismatch nor leaks the length.
   const digest = (value) => crypto.createHash('sha256').update(String(value)).digest();
-  const expectedUser = digest(user);
-  const expectedPassword = digest(password);
-
+  const expected = digest(token);
   return (req, res, next) => {
-    if (req.path === '/api/health') return next();
-    const match = /^Basic\s+(.+)$/i.exec(String(req.headers.authorization || ''));
-    if (match) {
-      const decoded = Buffer.from(match[1], 'base64').toString('utf8');
-      const separator = decoded.indexOf(':');
-      if (separator >= 0) {
-        const userOk = crypto.timingSafeEqual(digest(decoded.slice(0, separator)), expectedUser);
-        const passwordOk = crypto.timingSafeEqual(digest(decoded.slice(separator + 1)), expectedPassword);
-        if (userOk && passwordOk) return next();
-      }
-    }
-    res.set('WWW-Authenticate', `Basic realm="${realm}", charset="UTF-8"`);
-    return res.status(401).send('Authentication required');
+    const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+    const provided = String(req.headers['x-admin-token'] || (bearer ? bearer[1] : '')).trim();
+    if (provided && crypto.timingSafeEqual(digest(provided), expected)) return next();
+    return res.status(401).json({ error: 'Admin-Token erforderlich oder ungültig.', code: 'admin_token_required' });
   };
 }
 
@@ -1662,12 +1652,11 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   }
 
   const app = express();
-  const authUser = process.env.BASIC_AUTH_USER || '';
-  const authPassword = process.env.BASIC_AUTH_PASSWORD || '';
-  if (authUser && authPassword) {
-    app.use(createBasicAuthMiddleware({ user: authUser, password: authPassword }));
+  const adminToken = String(process.env.ADMIN_TOKEN || '').trim();
+  if (adminToken) {
+    app.use(['/api/admin', '/api/jobs'], createAdminTokenMiddleware(adminToken));
   } else {
-    logger.warn('BASIC_AUTH_USER/BASIC_AUTH_PASSWORD not set: dashboard and admin endpoints are publicly accessible');
+    logger.warn('ADMIN_TOKEN not set: admin endpoints (/api/admin, /api/jobs) are publicly accessible');
   }
   app.use(express.json({ limit: '256kb' }));
   app.use('/assets', express.static(path.join(PUBLIC_DIR, 'assets')));
