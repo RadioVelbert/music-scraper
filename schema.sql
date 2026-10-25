@@ -202,3 +202,26 @@ create table if not exists chart_runs(
   last_error text,
   entries integer
 );
+
+-- Songs we want to add to our own rotation. song_key is the normalized artist/title hash, so the same song
+-- arriving with different spellings or track_keys collapses into one row (variants_json keeps what was merged).
+create table if not exists favorites(
+  id integer primary key autoincrement,
+  song_key text not null unique,
+  artist text not null,
+  title text not null,
+  track_key text,
+  artwork_url text,
+  variants_json text not null default '[]',
+  created_at_utc text not null,
+  done integer not null default 0,
+  done_at_utc text,
+  status text not null default 'open',
+  note text not null default ''
+);
+
+-- Merge suggestions the user dismissed ("winner>loser"), so they don't come back.
+create table if not exists merge_ignored(
+  pair_key text primary key,
+  created_at_utc text not null
+);

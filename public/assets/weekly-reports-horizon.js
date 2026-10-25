@@ -11,6 +11,9 @@ import {
   PanelCard,
   useUiColors,
   PlayButton,
+  CopyTrackButton,
+  FavoriteButton,
+  OwnPlayBadge,
   LoadingSpinner
 } from './horizon-lib.js';
 
@@ -114,7 +117,15 @@ function TopTracksTable({ tracks }) {
                   <span>${row.artist}</span>
                 <//>
               <//>
-              <${Chakra.Td} color=${ui.textMuted}>${row.title}<//>
+              <${Chakra.Td} color=${ui.textMuted} w="35%">
+                <${Chakra.HStack} spacing="1" w="100%">
+                  <span>${row.title}</span>
+                  <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+                  <${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+                  <${Chakra.Spacer} />
+                  <${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
+                <//>
+              <//>
               <${Chakra.Td} isNumeric fontWeight="700">${formatNumber(row.plays)}<//>
               <${Chakra.Td} isNumeric>
                 ${row.delta != null ? deltaBadge(row.delta, ui) : '-'}
@@ -220,17 +231,20 @@ function StationReportPanel({ stationId, weekStart, stations }) {
             ${(r.topTracks || []).map((row, index) => html`
               <${Chakra.HStack}
                 key=${row.track_key}
-                justify="space-between" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="flex-start"
+                spacing="2" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="center"
                 cursor="pointer" _hover=${{ bg: ui.subtleBg }}
                 onClick=${() => { window.location.href = `/dashboard?trackKey=${encodeURIComponent(row.track_key)}`; }}
               >
-                <${Chakra.HStack} spacing="2" flex="1" minW="0" align="flex-start">
-                  <${Chakra.Text} fontSize="xs" color=${ui.textMuted} flexShrink="0" w="5" textAlign="right" pt="0.5">${index + 1}<//>
-                  <${Chakra.Box} flex="1" minW="0">
-                    <${Chakra.Text} fontSize="sm" fontWeight="600">${row.artist}<//>
-                    <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>${row.title}<//>
-                  <//>
+                <${Chakra.Text} fontSize="xs" color=${ui.textMuted} flexShrink="0" w="5" textAlign="right" pt="0.5">${index + 1}<//>
+                <${PlayButton} track=${{ trackKey: row.track_key, artist: row.artist, title: row.title }} size="xs" />
+                <${Chakra.Box} minW="0">
+                  <${Chakra.Text} fontSize="sm" fontWeight="600">${row.artist}<//>
+                  <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>${row.title}<//>
                 <//>
+                <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
                 <${Chakra.Text} fontSize="sm" fontWeight="700" flexShrink="0" ml="2">${formatNumber(row.count)}<//>
               <//>
             `)}
@@ -246,14 +260,19 @@ function StationReportPanel({ stationId, weekStart, stations }) {
                   ${(r.newTracks || []).map((row) => html`
                     <${Chakra.HStack}
                       key=${row.track_key}
-                      justify="space-between" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="flex-start"
+                      spacing="2" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="center"
                       cursor="pointer" _hover=${{ bg: ui.subtleBg }}
                       onClick=${() => { window.location.href = `/dashboard?trackKey=${encodeURIComponent(row.track_key)}`; }}
                     >
-                      <${Chakra.Box} flex="1" minW="0">
+                      <${PlayButton} track=${{ trackKey: row.track_key, artist: row.artist, title: row.title }} size="xs" />
+                      <${Chakra.Box} minW="0">
                         <${Chakra.Text} fontSize="sm" fontWeight="600">${row.artist}<//>
                         <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>${row.title}<//>
                       <//>
+                      <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
                       <${Chakra.Badge} colorScheme="green" borderRadius="999px" flexShrink="0" ml="2">${formatNumber(row.count)}<//>
                     <//>
                   `)}
@@ -269,14 +288,19 @@ function StationReportPanel({ stationId, weekStart, stations }) {
                   ${(r.movers?.topGainers || []).map((row) => html`
                     <${Chakra.HStack}
                       key=${row.track_key}
-                      justify="space-between" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="flex-start"
+                      spacing="2" py="1" borderBottom="1px solid" borderColor=${ui.lineColor} align="center"
                       cursor="pointer" _hover=${{ bg: ui.subtleBg }}
                       onClick=${() => { window.location.href = `/dashboard?trackKey=${encodeURIComponent(row.track_key)}`; }}
                     >
-                      <${Chakra.Box} flex="1" minW="0">
+                      <${PlayButton} track=${{ trackKey: row.track_key, artist: row.artist, title: row.title }} size="xs" />
+                      <${Chakra.Box} minW="0">
                         <${Chakra.Text} fontSize="sm" fontWeight="600">${row.artist}<//>
                         <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>${row.title}<//>
                       <//>
+                      <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
                       <${Chakra.Badge} colorScheme="green" borderRadius="999px" flexShrink="0" ml="2">+${formatNumber(row.delta)}<//>
                     <//>
                   `)}

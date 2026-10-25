@@ -22,9 +22,11 @@ import { buildTrackSeries, buildTrackSeriesByStation, buildTrackTotals } from '.
 import { runDailyEvaluation, runManualTrackMerge, deleteAndBlockTrack } from './services.js';
 import { listStationConfigs, getStationConfig, importStationsFromConfig, saveStationConfig, syncStationsFromConfig } from './stationStore.js';
 import { applyDisplayNames } from './displayNames.js';
-import { getTrackDetails, getTrackPreview } from './trackDetails.js';
+import { getTrackDetails, getTrackPreview, getPreviewByName } from './trackDetails.js';
 import { createJobRunner, createJobCatalog, initScheduler } from './jobs.js';
 import { registerAdminRoutes } from './adminApi.js';
+import { listOwnStationPlays, listRisers, findMergeCandidates, ignoreMergePairs } from './insights.js';
+import { listFavorites, addFavorite, lookupSongKeys, removeFavoriteById, setFavoriteDone, updateFavorite, bulkSetFavoriteStatus, removeFavoritesByIds, favoriteTrackKeys, buildFavoritesCsv, removeFavoriteBySongKey, clearFavorites } from './favorites.js';
 import { listCharts, getChartEntries } from './charts.js';
 import { buildStationAnalytics } from './analytics.js';
 import { TrackVerifier } from './trackVerifier.js';
@@ -267,7 +269,7 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
     docs: (_req, res) => {
       res.json({
         name: 'Music Scraper API',
-        pages: ['GET /dashboard', 'GET /new-titles', 'GET /weekly-reports', 'GET /my-station', 'GET /admin'],
+        pages: ['GET /dashboard', 'GET /new-titles', 'GET /weekly-reports', 'GET /my-station', 'GET /risers', 'GET /favorites', 'GET /admin'],
         endpoints: [
           'GET /api/health',
           'GET /api/docs',
@@ -276,6 +278,11 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
           'GET /api/new-titles?from=YYYY-MM-DD&to=YYYY-MM-DD&station=ID&limit=250&minPlays=1&q=QUERY&requireReleaseDate=1&maxReleaseAgeDays=730&minReleaseConfidence=0.55',
           'GET /api/tracks/search?q=QUERY&limit=30',
           'GET /api/tracks/:trackKey/details?refresh=1  (Deezer: artwork, ISRC, release, contributors, links; plays per station)',
+          'GET /api/favorites  |  GET /api/favorites/export.csv (Artist;Title;ISRC;Release Date;Dauer;Gesamtplays)  |  POST /api/favorites {artist,title,trackKey?,artworkUrl?}  (duplicates are merged)  |  POST /api/favorites/bulk {ids, action: status|delete, status}  |  PATCH /api/favorites/:id {status: open|requested|in_programm, note}  |  DELETE /api/favorites/:id  |  DELETE /api/favorites (clear all)',
+          'GET /api/risers?days=3&limit=100&minStations=2&excludeOwn=1  (songs reaching more stations than in the window before)',
+          'GET /api/my-station/plays  (track_key -> plays by the own station)',
+          'GET /api/merge-suggestions  |  POST /api/merge-suggestions/ignore {winnerTrackKey, loserTrackKeys[]}',
+          'GET /api/preview?artist=A&title=T  (30s preview by name via Deezer, for songs without track_key)',
           'GET /api/tracks/:trackKey/preview  (fresh 30s preview URL, Deezer or iTunes)',
           'GET /api/tracks/:trackKey/series?bucket=day|week|month|year&from=YYYY-MM-DD&to=YYYY-MM-DD',
           'GET /api/tracks/:trackKey/series-by-station?bucket=day|week|month|year&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=10',
@@ -970,6 +977,121 @@ export function createApiHandlers({ configPath, dbPath, logger }) {
       }
     },
 
+    favoritesList: (_req, res) => {
+      res.locals.skipDisplayNames = true;
+      const favorites = listFavorites(sharedDb);
+      return res.json({ favorites, keys: favorites.map((f) => f.song_key), track_keys: favoriteTrackKeys(favorites) });
+    },
+
+    favoritesExportCsv: async (_req, res) => {
+      try {
+        const csv = await buildFavoritesCsv(sharedDb, { logger });
+        res.set('Content-Type', 'text/csv; charset=utf-8');
+        res.set('Content-Disposition', `attachment; filename="favoriten-${new Date().toISOString().slice(0, 10)}.csv"`);
+        return res.send(csv);
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    favoritesAdd: (req, res) => {
+      try {
+        const result = addFavorite(sharedDb, req.body || {});
+        return res.status(result.added ? 201 : 200).json(result);
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    favoritesLookup: (req, res) => {
+      const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 1000) : [];
+      return res.json({ keys: lookupSongKeys(items) });
+    },
+
+    favoritesSetDone: (req, res) => {
+      try {
+        const favorite = updateFavorite(sharedDb, req.params.id, {
+          status: req.body?.status,
+          note: req.body?.note,
+          done: req.body?.done === undefined ? undefined : Boolean(req.body.done)
+        });
+        if (!favorite) return res.status(404).json({ error: 'Favorit nicht gefunden.' });
+        return res.json({ favorite });
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    favoritesBulk: (req, res) => {
+      try {
+        const { ids, action, status } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids sind erforderlich.' });
+        if (action === 'status') return res.json({ changed: bulkSetFavoriteStatus(sharedDb, ids, status) });
+        if (action === 'delete') return res.json({ removed: removeFavoritesByIds(sharedDb, ids) });
+        return res.status(400).json({ error: 'Unbekannte Aktion.' });
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    favoritesRemove: (req, res) => res.json({ removed: removeFavoriteById(sharedDb, req.params.id) }),
+
+    favoritesRemoveBySong: (req, res) => res.json({ removed: removeFavoriteBySongKey(sharedDb, req.params.songKey) }),
+
+    favoritesClear: (_req, res) => res.json({ removed: clearFavorites(sharedDb) }),
+
+    // What the own station ("Mein Sender") has played, per track_key: drives the "läuft schon bei uns" badge.
+    ownPlays: (_req, res) => {
+      res.locals.skipDisplayNames = true;
+      const stationId = resolveMyStationId({});
+      const plays = listOwnStationPlays(sharedDb, stationId);
+      return res.json({ station_id: stationId, plays });
+    },
+
+    risers: (req, res) => {
+      try {
+        const query = normalizeQuery(req.query);
+        const stationId = resolveMyStationId({});
+        const data = listRisers(sharedDb, {
+          days: parseIntQuery(query.days, { fallback: 3, min: 1, max: 30, fieldName: 'days' }),
+          limit: parseIntQuery(query.limit, { fallback: 100, min: 1, max: 500, fieldName: 'limit' }),
+          minStations: parseIntQuery(query.minStations, { fallback: 2, min: 1, max: 50, fieldName: 'minStations' }),
+          ownStationId: stationId,
+          excludeOwn: String(query.excludeOwn || '') === '1'
+        });
+        return res.json({ ...data, own_station_id: stationId });
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    mergeSuggestions: (req, res) => {
+      try {
+        const limit = parseIntQuery(normalizeQuery(req.query).limit, { fallback: 50, min: 1, max: 200, fieldName: 'limit' });
+        return res.json({ suggestions: findMergeCandidates(sharedDb, { limit }) });
+      } catch (error) {
+        return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
+    mergeSuggestionsIgnore: (req, res) => {
+      const winner = String(req.body?.winnerTrackKey || '').trim();
+      const losers = (Array.isArray(req.body?.loserTrackKeys) ? req.body.loserTrackKeys : []).map((k) => String(k).trim()).filter(Boolean);
+      if (!winner || !losers.length) return res.status(400).json({ error: 'winnerTrackKey und loserTrackKeys sind erforderlich.' });
+      ignoreMergePairs(sharedDb, winner, losers);
+      return res.json({ ok: true });
+    },
+
+    previewByName: async (req, res) => {
+      try {
+        const preview = await getPreviewByName(String(req.query.artist || ''), String(req.query.title || ''), { logger });
+        if (!preview) return res.status(404).json({ error: 'Kein Hörbeispiel gefunden' });
+        return res.json(preview);
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+
     trackPreview: async (req, res) => {
       try {
         const preview = await getTrackPreview(sharedDb, req.params.trackKey, { logger });
@@ -1560,6 +1682,8 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   app.get('/new-titles', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'new-titles.html')));
   app.get('/weekly-reports', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'weekly-reports.html')));
   app.get('/my-station', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'my-station.html')));
+  app.get('/risers', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'risers.html')));
+  app.get('/favorites', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'favorites.html')));
   app.get('/admin', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'admin.html')));
   // One page per chart (/charts/radio, /charts/billboard); the page picks the chart from the path.
   app.get('/charts', (_req, res) => res.redirect('/charts/radio'));
@@ -1582,6 +1706,20 @@ export function createApiApp({ configPath, dbPath, logger, jobs = null, catalog 
   app.get('/api/new-titles', handlers.newTitles);
   app.get('/api/tracks/search', handlers.search);
   app.get('/api/tracks/:trackKey/details', handlers.trackDetails);
+  app.get('/api/my-station/plays', handlers.ownPlays);
+  app.get('/api/risers', handlers.risers);
+  app.get('/api/merge-suggestions', handlers.mergeSuggestions);
+  app.post('/api/merge-suggestions/ignore', handlers.mergeSuggestionsIgnore);
+  app.get('/api/favorites', handlers.favoritesList);
+  app.get('/api/favorites/export.csv', handlers.favoritesExportCsv);
+  app.post('/api/favorites', handlers.favoritesAdd);
+  app.post('/api/favorites/lookup', handlers.favoritesLookup);
+  app.post('/api/favorites/bulk', handlers.favoritesBulk);
+  app.patch('/api/favorites/:id', handlers.favoritesSetDone);
+  app.delete('/api/favorites/song/:songKey', handlers.favoritesRemoveBySong);
+  app.delete('/api/favorites/:id', handlers.favoritesRemove);
+  app.delete('/api/favorites', handlers.favoritesClear);
+  app.get('/api/preview', handlers.previewByName);
   app.get('/api/tracks/:trackKey/preview', handlers.trackPreview);
   app.get('/api/tracks/:trackKey/series', handlers.trackSeries);
   app.get('/api/tracks/:trackKey/series-by-station', handlers.trackSeriesByStation);

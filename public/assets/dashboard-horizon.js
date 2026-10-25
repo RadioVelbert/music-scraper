@@ -30,6 +30,12 @@ import {
   StatTile,
   TrackCover,
   PlayButton,
+  CopyTrackButton,
+  FavoriteButton,
+  useFavoriteVersion,
+  isFavoriteTrackKey,
+  ensureFavoritesLoaded,
+  OwnPlayBadge,
   CoverPlay,
   AppIcons,
   BRAND_GRADIENT,
@@ -393,7 +399,14 @@ function DashboardApp() {
   const [mergeState, setMergeState] = React.useState('');
 
   const debouncedSearch = useDebouncedValue(search, 250);
-  const sortedTracks = React.useMemo(() => sortTracks(tracks, sortMode), [tracks, sortMode]);
+  const [favFilter, setFavFilter] = React.useState('all');
+  const favVersion = useFavoriteVersion();
+  React.useEffect(() => { ensureFavoritesLoaded(); }, []);
+  const sortedTracks = React.useMemo(() => {
+    const sorted = sortTracks(tracks, sortMode);
+    if (favFilter === 'all') return sorted;
+    return sorted.filter((row) => isFavoriteTrackKey(row.track_key) === (favFilter === 'only'));
+  }, [tracks, sortMode, favFilter, favVersion]);
 
   // All rows are loaded (KPIs, sorting), but rendered in steps so "Alle" stays fast with many tracks.
   const [visibleCount, setVisibleCount] = React.useState(RENDER_STEP);
@@ -440,16 +453,6 @@ function DashboardApp() {
     }
   }, [debouncedSearch, stationId, trackLimit]);
 
-  const copyTrackMeta = async (artist, title) => {
-    const text = `${artist} – ${title}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ status: 'success', title: 'Kopiert', description: text, duration: 2000 });
-    } catch {
-      toast({ status: 'warning', title: 'Kopieren nicht möglich', description: text });
-    }
-  };
-
   const deleteTrack = async (trackKey, artistTitle) => {
     if (!window.confirm(`"${artistTitle}" wirklich löschen und dauerhaft blockieren?\n\nDieser Track wird aus allen Plays entfernt und nie mehr gespeichert.`)) return;
     try {
@@ -458,6 +461,58 @@ function DashboardApp() {
       await loadTracks();
     } catch (error) {
       toast({ status: 'error', title: 'Löschen fehlgeschlagen', description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const [suggestions, setSuggestions] = React.useState(null);
+  const [suggestionsLoading, setSuggestionsLoading] = React.useState(false);
+  const [mergingKey, setMergingKey] = React.useState('');
+
+  const loadSuggestions = async () => {
+    setSuggestionsLoading(true);
+    try {
+      const result = await apiFetch('/api/merge-suggestions?limit=50');
+      setSuggestions(result.suggestions || []);
+    } catch (error) {
+      toast({ status: 'error', title: 'Vorschläge nicht ladbar', description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const acceptSuggestion = async (suggestion) => {
+    const names = suggestion.losers.map((l) => `${l.artist} – ${l.title}`).join('\n');
+    if (!window.confirm(`Zusammenführen in "${suggestion.winner.artist} – ${suggestion.winner.title}"?\n\n${names}\n\nDie Plays werden dauerhaft auf den Gewinner umgeschrieben.`)) return;
+    setMergingKey(suggestion.winner.track_key);
+    try {
+      for (const loser of suggestion.losers) {
+        await apiFetch('/api/admin/merge-tracks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ winnerTrackKey: suggestion.winner.track_key, loserTrackKey: loser.track_key })
+        });
+      }
+      toast({ status: 'success', title: 'Zusammengeführt', description: `${suggestion.losers.length} Eintrag/Einträge in "${suggestion.winner.title}".` });
+      setSuggestions((list) => (list || []).filter((s) => s.winner.track_key !== suggestion.winner.track_key));
+      await loadTracks();
+    } catch (error) {
+      toast({ status: 'error', title: 'Merge fehlgeschlagen', description: error instanceof Error ? error.message : String(error) });
+      await loadSuggestions();
+    } finally {
+      setMergingKey('');
+    }
+  };
+
+  const ignoreSuggestion = async (suggestion) => {
+    try {
+      await apiFetch('/api/merge-suggestions/ignore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winnerTrackKey: suggestion.winner.track_key, loserTrackKeys: suggestion.losers.map((l) => l.track_key) })
+      });
+      setSuggestions((list) => (list || []).filter((s) => s.winner.track_key !== suggestion.winner.track_key));
+    } catch (error) {
+      toast({ status: 'error', title: 'Nicht gespeichert', description: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -535,6 +590,11 @@ function DashboardApp() {
             <${Chakra.Select} flex="1 1 160px" value=${sortMode} onChange=${(e) => setSortMode(e.target.value)}>
               ${SORT_OPTIONS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
             <//>
+            <${Chakra.Select} flex="0 1 170px" value=${favFilter} onChange=${(e) => setFavFilter(e.target.value)} aria-label="Favoriten-Filter">
+              <option value="all">Alle Songs</option>
+              <option value="only">Nur Favoriten</option>
+              <option value="exclude">Ohne Favoriten</option>
+            <//>
             <${Chakra.Select} flex="0 1 130px" value=${trackLimit} onChange=${(e) => setTrackLimit(e.target.value)}>
               ${['100', '250', '500', '1000', 'all'].map((v) => html`<option key=${v} value=${v}>${v === 'all' ? 'Alle' : `${v} Titel`}</option>`)}
             <//>
@@ -573,23 +633,17 @@ function DashboardApp() {
                     onClick=${() => openTrackPage(row.track_key)}
                   >
                     <${Chakra.Td} py="2.5" textAlign="right" color="textMuted" fontSize="xs" fontWeight="600">${index + 1}<//>
-                    <${Chakra.Td} py="2.5" maxW="460px">
-                      <${Chakra.HStack} spacing="3">
+                    <${Chakra.Td} py="2.5" w="52%">
+                      <${Chakra.HStack} spacing="3" w="100%">
                         <${CoverPlay} track=${playable(row)} size="44px" />
                         <${Chakra.Box} minW="0">
                           <${Chakra.Text} fontWeight="700" fontSize="sm" color="textPrimary" noOfLines=${1}>${row.title}<//>
                           <${Chakra.Text} fontSize="sm" color="textMuted" noOfLines=${1}>${row.artist}<//>
                         <//>
-                        <${Chakra.Tooltip} label="Titel & Interpret kopieren">
-                          <${Chakra.IconButton}
-                            size="xs"
-                            variant="ghost"
-                            flexShrink="0"
-                            aria-label="Titel & Interpret kopieren"
-                            icon=${html`<${Icons.CopyIcon} boxSize="3" />`}
-                            onClick=${(e) => { e.stopPropagation(); copyTrackMeta(row.artist, row.title); }}
-                          />
-                        <//>
+                        <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
                       <//>
                     <//>
                     <${Chakra.Td} py="2.5" isNumeric fontWeight="700">${formatNumber(row.total_plays)}<//>
@@ -653,7 +707,36 @@ function DashboardApp() {
           ` : null}
         <//>
 
-        <${PanelCard} title="Track-Merge" subtitle="Doppelte Einträge zusammenführen: W/L in der Tabelle wählen oder Keys eintragen." icon=${AppIcons.Link}>
+        <${PanelCard} title="Track-Merge" subtitle="Doppelte Einträge zusammenführen: Vorschläge prüfen, W/L in der Tabelle wählen oder Keys eintragen." icon=${AppIcons.Link}>
+          <${Chakra.Box} mb="5">
+            <${Chakra.HStack} justify="space-between" mb="2">
+              <${Chakra.Text} fontWeight="700" fontSize="sm">Vorschläge<//>
+              <${Chakra.Button} size="sm" variant="outline" onClick=${loadSuggestions} isLoading=${suggestionsLoading}>${suggestions ? 'Neu suchen' : 'Dubletten suchen'}<//>
+            <//>
+            ${suggestions && !suggestions.length ? html`<${Chakra.Text} fontSize="sm" color="textMuted">Keine Dubletten gefunden.<//>` : null}
+            <${Chakra.VStack} align="stretch" spacing="2">
+              ${(suggestions || []).map((s) => html`
+                <${Chakra.Box} key=${s.winner.track_key} border="1px solid" borderColor="lineColor" borderRadius="14px" p="3">
+                  <${Chakra.Flex} gap="3" align="center" wrap="wrap">
+                    <${Chakra.Box} flex="1 1 320px" minW="0">
+                      <${Chakra.HStack} spacing="2" mb="1">
+                        <${Chakra.Badge} colorScheme=${s.reason === 'isrc' ? 'green' : 'orange'}>${s.reason === 'isrc' ? 'Gleiche ISRC' : 'Ähnlicher Name'}<//>
+                        <${Chakra.Text} fontSize="xs" color="textMuted">${formatNumber(s.total_plays)} Plays insgesamt<//>
+                      <//>
+                      <${Chakra.Text} fontSize="sm" fontWeight="700">Bleibt: ${s.winner.artist} – ${s.winner.title} <${Chakra.Text} as="span" color="textMuted" fontWeight="500">(${formatNumber(s.winner.plays)} Plays)<//><//>
+                      ${s.losers.map((l) => html`
+                        <${Chakra.Text} key=${l.track_key} fontSize="sm" color="textMuted">Wird eingefügt: ${l.artist} – ${l.title} (${formatNumber(l.plays)} Plays)<//>
+                      `)}
+                    <//>
+                    <${Chakra.HStack} spacing="2">
+                      <${Chakra.Button} size="sm" colorScheme="brand" onClick=${() => acceptSuggestion(s)} isLoading=${mergingKey === s.winner.track_key}>Zusammenführen<//>
+                      <${Chakra.Button} size="sm" variant="ghost" onClick=${() => ignoreSuggestion(s)}>Ignorieren<//>
+                    <//>
+                  <//>
+                <//>
+              `)}
+            <//>
+          <//>
           <${Chakra.SimpleGrid} columns=${{ base: 1, md: 3 }} spacing="3" alignItems="end">
             <${Chakra.FormControl}>
               <${Chakra.FormLabel} fontSize="sm">Winner Track Key<//>
@@ -765,7 +848,15 @@ function TrackHero({ details, fallbackTrack, trackKey, loading, onRefresh, refre
             ${deezer ? html`<${Chakra.Badge} bg="whiteAlpha.200" color="whiteAlpha.800">Deezer-Daten<//>` : loading ? html`<${Chakra.Badge} bg="whiteAlpha.200" color="whiteAlpha.700" className="rv-pulse">Lade Deezer-Daten…<//>` : null}
           <//>
           <${Chakra.Box}>
-            <${Chakra.Heading} size="2xl" letterSpacing="-0.03em" lineHeight="1.1" noOfLines=${2}>${title}<//>
+            <${Chakra.HStack} align="flex-start" spacing="2" w="100%">
+              <${Chakra.Heading} size="2xl" letterSpacing="-0.03em" lineHeight="1.1" noOfLines=${2}>${title}<//>
+              ${artist ? html`
+                <${Chakra.Box} color="whiteAlpha.800" pt="1"><${CopyTrackButton} artist=${artist} title=${title} size="md" color="whiteAlpha.800" _hover=${{ bg: 'whiteAlpha.200' }} /><//>
+                <${OwnPlayBadge} artist=${artist} title=${title} trackKey=${trackKey} />
+                <${Chakra.Spacer} />
+                <${Chakra.Box} color="whiteAlpha.800" pt="1"><${FavoriteButton} artist=${artist} title=${title} trackKey=${trackKey} artworkUrl=${details?.artworkSmall || artwork} size="md" color="whiteAlpha.800" _hover=${{ bg: 'whiteAlpha.200' }} /><//>
+              ` : null}
+            <//>
             <${Chakra.Text} mt="2" fontSize="xl" color="whiteAlpha.800" fontWeight="500" noOfLines=${2}>
               ${deezer?.artist?.link
                 ? html`<${Chakra.Link} href=${deezer.artist.link} isExternal _hover=${{ color: 'brand.300' }}>${artist}<//>`

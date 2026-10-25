@@ -45,8 +45,21 @@ export function openDb(dbPath, { busyTimeoutMs = 20000 } = {}) {
   ensureTrackMetadataColumns(db);
   ensureStationColumns(db);
   ensureChartColumns(db);
+  ensureFavoriteColumns(db);
 
   return db;
+}
+
+function ensureFavoriteColumns(db) {
+  const existing = new Set(db.prepare("select name from pragma_table_info('favorites')").all().map((row) => row.name));
+  if (!existing.has('done')) db.exec('alter table favorites add column done integer not null default 0');
+  if (!existing.has('done_at_utc')) db.exec('alter table favorites add column done_at_utc text');
+  if (!existing.has('note')) db.exec("alter table favorites add column note text not null default ''");
+  if (!existing.has('status')) {
+    db.exec("alter table favorites add column status text not null default 'open'");
+    // the earlier "bearbeitet" checkbox becomes the final status
+    db.exec("update favorites set status = 'in_programm' where done = 1");
+  }
 }
 
 function ensureChartColumns(db) {

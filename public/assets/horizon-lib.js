@@ -147,6 +147,9 @@ export const AppIcons = {
   Search: strokeIcon('SearchIcon', [CIRCLE(11, 11, 8), 'M21 21l-4.35-4.35']),
   Plus: strokeIcon('PlusIcon', ['M12 5v14', 'M5 12h14']),
   Chart: strokeIcon('ChartIcon', ['M18 20V10', 'M12 20V4', 'M6 20v-6']),
+  TrendUp: strokeIcon('TrendUpIcon', ['M23 6l-9.5 9.5-5-5L1 18', 'M17 6h6v6']),
+  Star: strokeIcon('StarIcon', ['M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z']),
+  StarFilled: fillIcon('StarFilledIcon', ['M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z']),
   Play: fillIcon('PlayIcon', ['M8 5.14v13.72a1 1 0 0 0 1.52.85l11.02-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z']),
   Pause: fillIcon('PauseIcon', ['M6 4h4v16H6z', 'M14 4h4v16h-4z'])
 };
@@ -154,10 +157,12 @@ export const AppIcons = {
 export const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', key: 'dashboard', icon: AppIcons.Grid },
   { href: '/new-titles', label: 'Neue Titel', key: 'new-titles', icon: AppIcons.Sparkle },
+  { href: '/risers', label: 'Aufsteiger', key: 'risers', icon: AppIcons.TrendUp },
   { href: '/weekly-reports', label: 'Wochenberichte', key: 'weekly-reports', icon: AppIcons.Report },
   { href: '/charts/radio', label: 'Radio-Charts', key: 'charts-radio', icon: AppIcons.Chart },
   { href: '/charts/billboard', label: 'Billboard 200', key: 'charts-billboard', icon: AppIcons.Disc },
   { href: '/my-station', label: 'Mein Sender', key: 'my-station', icon: AppIcons.Radio },
+  { href: '/favorites', label: 'Favoriten', key: 'favorites', icon: AppIcons.Star },
   { href: '/admin', label: 'Administration', key: 'admin', icon: AppIcons.Sliders },
   { href: '/api/docs', label: 'API', key: 'api', icon: AppIcons.Code, external: true }
 ];
@@ -342,11 +347,19 @@ function updateMediaSession(track) {
   }
 }
 
+// Songs without a track_key (e.g. unmatched chart entries) are identified by name and previewed via Deezer.
+export function playerId(track) {
+  if (!track) return null;
+  if (track.trackKey) return track.trackKey;
+  return track.artist && track.title ? `name:${track.artist} – ${track.title}`.toLowerCase() : null;
+}
+
 export const player = {
-  // track: { trackKey, artist, title, artworkUrl }
+  // track: { trackKey?, artist, title, artworkUrl }
   async play(track) {
-    if (!audio || !track?.trackKey) return;
-    if (playerState.track?.trackKey === track.trackKey && playerState.status !== 'error') {
+    const id = playerId(track);
+    if (!audio || !id) return;
+    if (playerId(playerState.track) === id && playerState.status !== 'error') {
       player.toggle();
       return;
     }
@@ -354,13 +367,15 @@ export const player = {
     setPlayerState({ track, status: 'loading', currentTime: 0, duration: 0, error: null, source: null });
     updateMediaSession(track);
     try {
-      const preview = await apiFetch(`/api/tracks/${encodeURIComponent(track.trackKey)}/preview`);
-      if (playerState.track?.trackKey !== track.trackKey) return;
+      const preview = await apiFetch(track.trackKey
+        ? `/api/tracks/${encodeURIComponent(track.trackKey)}/preview`
+        : `/api/preview?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}`);
+      if (playerId(playerState.track) !== id) return;
       audio.src = preview.url;
       setPlayerState({ source: preview.source });
       await audio.play();
     } catch (error) {
-      if (playerState.track?.trackKey !== track.trackKey) return;
+      if (playerId(playerState.track) !== id) return;
       setPlayerState({ status: 'error', error: error instanceof Error ? error.message : String(error) });
     }
   },
@@ -552,7 +567,7 @@ export function TrackCover({ src, size = '44px', radius = '12px', alt = '' }) {
 }
 
 export function PlayButton({ track, size = 'sm', variant = 'solid' }) {
-  const status = usePlayer((state) => (state.track?.trackKey === track?.trackKey ? state.status : 'idle'));
+  const status = usePlayer((state) => (playerId(state.track) === playerId(track) ? state.status : 'idle'));
   const isPlaying = status === 'playing';
   const isLoading = status === 'loading';
   const label = isPlaying ? 'Pause' : 'Anhören';
@@ -586,27 +601,221 @@ export function PlayButton({ track, size = 'sm', variant = 'solid' }) {
   `;
 }
 
-// Cover with play overlay. With real artwork the button appears on hover of the
-// surrounding ".group" element (and stays visible while this track is active).
-export function CoverPlay({ track, size = '44px' }) {
-  const active = usePlayer((state) => state.track?.trackKey === track?.trackKey && state.status !== 'idle' && state.status !== 'ended');
-  const hasArt = Boolean(track?.artworkUrl);
+// Copies "Artist – Titel" to the clipboard (with a textarea fallback for non-secure contexts).
+export async function copyTrackText(artist, title) {
+  const text = [artist, title].map((v) => String(v || '').trim()).filter(Boolean).join(' – ');
+  if (!text) return null;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('no clipboard api');
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    if (!ok) throw new Error('copy failed');
+  }
+  return text;
+}
+
+export function CopyTrackButton({ artist, title, size = 'sm', ...rest }) {
+  const toast = Chakra.useToast();
+  const onClick = async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const text = await copyTrackText(artist, title);
+      if (text) toast({ status: 'success', title: 'Kopiert', description: text, duration: 2000 });
+    } catch {
+      toast({ status: 'warning', title: 'Kopieren nicht möglich' });
+    }
+  };
   return html`
-    <${Chakra.Box} position="relative" boxSize=${size} minW=${size}>
+    <${Chakra.Tooltip} label="Interpret & Titel kopieren">
+      <${Chakra.IconButton}
+        size=${size}
+        variant="ghost"
+        flexShrink="0"
+        aria-label="Interpret & Titel kopieren"
+        icon=${html`<${Icons.CopyIcon} boxSize="4" />`}
+        onClick=${onClick}
+        ...${rest}
+      />
+    <//>
+  `;
+}
+
+// ── Favorites (stored on the server; the browser only mirrors the song keys) ──
+
+// Server-side dedup key (normalized artist/title) per displayed artist/title pair.
+const favoriteState = { keys: new Set(), trackKeys: new Set(), loaded: false, version: 0 };
+const ownState = { plays: new Map(), loaded: false, loading: false };
+const favoriteListeners = new Set();
+const songKeyByName = new Map();
+const lookupQueue = new Map();
+let lookupTimer = null;
+let favoritesLoading = null;
+
+const nameKey = (artist, title) => `${artist}\u0001${title}`;
+
+function bumpFavorites() {
+  favoriteState.version += 1;
+  favoriteListeners.forEach((listener) => listener());
+}
+
+export function setFavoriteKeys(keys, trackKeys) {
+  favoriteState.keys = new Set(keys);
+  if (trackKeys) favoriteState.trackKeys = new Set(trackKeys);
+  favoriteState.loaded = true;
+  bumpFavorites();
+}
+
+function loadFavoriteKeys() {
+  if (favoriteState.loaded || favoritesLoading) return;
+  favoritesLoading = apiFetch('/api/favorites', { silent: true })
+    .then((data) => setFavoriteKeys(data.keys || [], data.track_keys || []))
+    .catch(() => {})
+    .finally(() => { favoritesLoading = null; });
+}
+
+function flushLookups() {
+  lookupTimer = null;
+  const batch = [...lookupQueue.entries()];
+  lookupQueue.clear();
+  for (let i = 0; i < batch.length; i += 500) {
+    const chunk = batch.slice(i, i + 500);
+    apiFetch('/api/favorites/lookup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: chunk.map(([, item]) => item) }),
+      silent: true
+    }).then((data) => {
+      chunk.forEach(([key], index) => songKeyByName.set(key, data.keys?.[index] || ''));
+      bumpFavorites();
+    }).catch(() => {});
+  }
+}
+
+function requestSongKey(artist, title) {
+  const key = nameKey(artist, title);
+  if (songKeyByName.has(key) || lookupQueue.has(key)) return;
+  lookupQueue.set(key, { artist, title });
+  if (!lookupTimer) lookupTimer = setTimeout(flushLookups, 40);
+}
+
+export function ensureFavoritesLoaded() {
+  loadFavoriteKeys();
+}
+
+// True when a track (by its track_key) is a favorite, including ids that were merged into one.
+export function isFavoriteTrackKey(trackKey) {
+  return Boolean(trackKey) && (favoriteState.trackKeys.has(trackKey) || favoriteState.keys.has(trackKey));
+}
+
+function loadOwnPlays() {
+  if (ownState.loaded || ownState.loading) return;
+  ownState.loading = true;
+  apiFetch('/api/my-station/plays', { silent: true })
+    .then((data) => {
+      ownState.plays = new Map((data.plays || []).map((row) => [row.track_key, row]));
+      ownState.loaded = true;
+      bumpFavorites();
+    })
+    .catch(() => {})
+    .finally(() => { ownState.loading = false; });
+}
+
+export function useFavoriteVersion() {
+  return React.useSyncExternalStore(
+    (listener) => { favoriteListeners.add(listener); return () => favoriteListeners.delete(listener); },
+    () => favoriteState.version
+  );
+}
+
+export function FavoriteButton({ artist, title, trackKey, artworkUrl, size = 'sm', ...rest }) {
+  const toast = Chakra.useToast();
+  useFavoriteVersion();
+  React.useEffect(() => {
+    loadFavoriteKeys();
+    if (artist && title) requestSongKey(artist, title);
+  }, [artist, title]);
+  const songKey = songKeyByName.get(nameKey(artist, title)) || '';
+  const active = (Boolean(songKey) && favoriteState.keys.has(songKey)) || (Boolean(trackKey) && favoriteState.trackKeys.has(trackKey));
+  const label = active ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen';
+  const onClick = async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      if (active) {
+        await apiFetch(`/api/favorites/song/${encodeURIComponent(songKey)}`, { method: 'DELETE' });
+        favoriteState.keys.delete(songKey);
+        if (trackKey) favoriteState.trackKeys.delete(trackKey);
+        bumpFavorites();
+        toast({ status: 'info', title: 'Aus Favoriten entfernt', description: `${artist} – ${title}`, duration: 2000 });
+        return;
+      }
+      const result = await apiFetch('/api/favorites', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ artist, title, trackKey: trackKey || undefined, artworkUrl: artworkUrl || undefined })
+      });
+      songKeyByName.set(nameKey(artist, title), result.favorite.song_key);
+      favoriteState.keys.add(result.favorite.song_key);
+      if (trackKey) favoriteState.trackKeys.add(trackKey);
+      bumpFavorites();
+      toast(result.added
+        ? { status: 'success', title: 'Zu Favoriten hinzugefügt', description: `${artist} – ${title}`, duration: 2000 }
+        : { status: 'warning', title: 'Dublette erkannt', description: `„${result.favorite.artist} – ${result.favorite.title}“ ist schon in den Favoriten.`, duration: 3500 });
+    } catch (error) {
+      toast({ status: 'error', title: 'Favorit nicht gespeichert', description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  return html`
+    <${Chakra.Tooltip} label=${label}>
+      <${Chakra.IconButton}
+        size=${size}
+        variant="ghost"
+        flexShrink="0"
+        ...${rest}
+        aria-label=${label}
+        aria-pressed=${active}
+        color=${active ? 'yellow.400' : rest.color}
+        icon=${active ? html`<${AppIcons.StarFilled} boxSize="5" />` : html`<${AppIcons.Star} boxSize="5" />`}
+        onClick=${onClick}
+      />
+    <//>
+  `;
+}
+
+// Small tag when the own station ("Mein Sender") has already played this song.
+export function OwnPlayBadge({ artist, title, trackKey }) {
+  useFavoriteVersion();
+  React.useEffect(() => {
+    loadOwnPlays();
+    if (artist && title) requestSongKey(artist, title);
+  }, [artist, title]);
+  const songKey = songKeyByName.get(nameKey(artist, title)) || '';
+  const entry = (trackKey && ownState.plays.get(trackKey)) || (songKey && ownState.plays.get(songKey)) || null;
+  if (!entry) return null;
+  return html`
+    <${Chakra.Tooltip} label=${`Lief schon bei uns: ${entry.plays}× · zuletzt ${formatRelative(entry.last_played_at_utc)}`}>
+      <${Chakra.Tag} size="sm" colorScheme="green" borderRadius="full" flexShrink="0" whiteSpace="nowrap">Bei uns · ${entry.plays}×<//>
+    <//>
+  `;
+}
+
+// Play button to the left of the cover, so the click target never sits on the
+// (clickable) row; clicks on the button do not open the detail page.
+export function CoverPlay({ track, size = '44px' }) {
+  return html`
+    <${Chakra.HStack} spacing="2" flexShrink="0">
+      <${PlayButton} track=${track} size="sm" />
       <${TrackCover} src=${track?.artworkUrl} size=${size} />
-      <${Chakra.Flex}
-        position="absolute"
-        inset="0"
-        align="center"
-        justify="center"
-        borderRadius="12px"
-        bg=${hasArt ? 'rgba(2, 6, 23, 0.45)' : 'transparent'}
-        opacity=${active || !hasArt ? 1 : 0}
-        _groupHover=${{ opacity: 1 }}
-        transition="opacity 0.15s ease"
-      >
-        <${PlayButton} track=${track} size="xs" />
-      <//>
     <//>
   `;
 }
@@ -640,8 +849,9 @@ function PlayerBar() {
           <${TrackCover} src=${track.artworkUrl} size="48px" radius="10px" />
           <${Chakra.Box} minW="0">
             <${Chakra.Link}
-              href=${trackHref(track.trackKey)}
+              href=${track.trackKey ? trackHref(track.trackKey) : undefined}
               onClick=${(event) => {
+                if (!track.trackKey) return;
                 event.preventDefault();
                 navigate(trackHref(track.trackKey));
               }}

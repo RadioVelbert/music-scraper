@@ -221,6 +221,24 @@ export async function getTrackDetails(db, trackKey, { refresh = false, logger } 
 }
 
 // Deezer preview URLs are signed and expire, so they are resolved fresh (memory cache 5 min).
+// Preview for a song that has no track_key (e.g. chart entries): plain Deezer lookup by artist + title.
+const namePreviewCache = new Map();
+export async function getPreviewByName(artist, title, { logger } = {}) {
+  const name = `${String(artist || '').trim()} – ${String(title || '').trim()}`.toLowerCase();
+  if (!artist || !title) return null;
+  const cached = namePreviewCache.get(name);
+  if (cached && Date.now() - cached.at < PREVIEW_CACHE_MS) return cached.url ? { url: cached.url, source: 'deezer' } : null;
+  let url = null;
+  try {
+    const deezerId = await findDeezerTrackId(artist, title);
+    if (deezerId) url = (await getDeezerTrack(deezerId))?.preview || null;
+  } catch (error) {
+    logger?.warn?.({ artist, title, err: error instanceof Error ? error.message : String(error) }, 'deezer name preview lookup failed');
+  }
+  namePreviewCache.set(name, { url, at: Date.now() });
+  return url ? { url, source: 'deezer' } : null;
+}
+
 export async function getTrackPreview(db, trackKey, { logger } = {}) {
   const cached = previewCache.get(trackKey);
   if (cached && Date.now() - cached.at < PREVIEW_CACHE_MS) return { url: cached.url, source: 'deezer' };

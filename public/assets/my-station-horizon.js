@@ -15,6 +15,9 @@ import {
   useUiColors,
   Icons,
   PlayButton,
+  CopyTrackButton,
+  FavoriteButton,
+  OwnPlayBadge,
   LoadingSpinner
 } from './horizon-lib.js';
 
@@ -55,13 +58,17 @@ function TrackRow({ track, badge, badgeScheme = 'blue' }) {
       _hover=${{ bg: ui.hoverBg ?? (ui.cardBg + '99') }}
       onClick=${() => { window.location.href = href; }}
     >
-      <${Chakra.Td} py="2" px="3">
-        <${Chakra.HStack} spacing="3">
+      <${Chakra.Td} py="2" px="3" w="60%">
+        <${Chakra.HStack} spacing="3" w="100%">
           <${PlayButton} track=${{ trackKey: track.track_key, artist: track.artist, title: track.title, artworkUrl: track.artwork_url || null }} size="xs" />
           <${Chakra.VStack} align="start" spacing="0" minW="0">
             <${Chakra.Text} fontWeight="700" fontSize="sm" noOfLines=${1}>${track.title}<//>
             <${Chakra.Text} fontSize="xs" color=${ui.textSecondary} noOfLines=${1}>${track.artist}<//>
           <//>
+          <${CopyTrackButton} artist=${track.artist} title=${track.title} />
+          <${OwnPlayBadge} artist=${track.artist} title=${track.title} trackKey=${track.track_key} />
+          <${Chakra.Spacer} />
+          <${FavoriteButton} artist=${track.artist} title=${track.title} trackKey=${track.track_key} artworkUrl=${track.artwork_url} />
         <//>
       <//>
       <${Chakra.Td} py="2" px="3" isNumeric>

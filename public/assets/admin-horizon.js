@@ -2,6 +2,10 @@ import {
   React,
   createRoot,
   Chakra,
+  CopyTrackButton,
+  FavoriteButton,
+  OwnPlayBadge,
+  PlayButton,
   Icons,
   html,
   horizonTheme,
@@ -437,10 +441,16 @@ function TestResult({ result }) {
                   <${Chakra.Td} fontSize="sm">
                     <${Chakra.HStack} spacing="2">
                       ${play.artworkUrl ? html`<${Chakra.Image} src=${play.artworkUrl} boxSize="28px" borderRadius="6px" objectFit="cover" />` : null}
+                      <${PlayButton} track=${{ artist: play.artistRaw, title: play.titleRaw, artworkUrl: play.artworkUrl || null }} size="xs" />
                       <span>${play.artistRaw}</span>
                     <//>
                   <//>
-                  <${Chakra.Td} fontSize="sm">${play.titleRaw}<//>
+                  <${Chakra.Td} fontSize="sm">
+                    <${Chakra.HStack} spacing="1"><span>${play.titleRaw}</span><${CopyTrackButton} artist=${play.artistRaw} title=${play.titleRaw} />
+<${OwnPlayBadge} artist=${play.artistRaw} title=${play.titleRaw} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${play.artistRaw} title=${play.titleRaw} /><//>
+                  <//>
                   <${Chakra.Td}>
                     ${play.noise
                       ? html`<${Chakra.Badge} colorScheme="orange">Wird gefiltert<//>`

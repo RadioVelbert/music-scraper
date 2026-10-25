@@ -14,6 +14,9 @@ import {
   useUiColors,
   Icons,
   PlayButton,
+  CopyTrackButton,
+  FavoriteButton,
+  OwnPlayBadge,
   TrackCover,
   LoadingOverlay,
   LoadingSpinner
@@ -351,12 +354,16 @@ function NewTitlesApp() {
                   ${daysText(row.ageDays)}
                 <//>
                 <${Chakra.HStack} spacing="3" mb="2">
+                  <${PlayButton} track=${playable(row)} size="sm" />
                   <${TrackCover} src=${row.artwork_url} size="52px" />
-                  <${Chakra.Box} flex="1" minW="0">
+                  <${Chakra.Box} minW="0">
                     <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} fontWeight="700" color=${ui.textPrimary} noOfLines=${1}>${row.title}<//>
                     <${Chakra.Text} fontSize="sm" color=${ui.textMuted} noOfLines=${1}>${row.artist}<//>
                   <//>
-                  <${PlayButton} track=${playable(row)} size="sm" />
+                  <${CopyTrackButton} artist=${row.artist} title=${row.title} size="sm" />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} size="sm" />
                 <//>
                 <${Chakra.HStack} spacing="2" mt="1">
                   <${Chakra.Text} fontSize="xs" color=${ui.textMuted}>Track ID: ${row.track_key || '-'}<//>
@@ -388,13 +395,17 @@ function NewTitlesApp() {
               <${Chakra.Tbody}>
                 ${processed.rows.map((row) => html`
                   <${Chakra.Tr} key=${row._id}>
-                    <${Chakra.Td}>
-                      <${Chakra.HStack} spacing="3">
+                    <${Chakra.Td} w="40%">
+                      <${Chakra.HStack} spacing="3" w="100%">
                         <${PlayButton} track=${playable(row)} size="xs" />
                         <${Chakra.Box} minW="0">
                           <${Chakra.Link} href=${`/dashboard?trackKey=${encodeURIComponent(row.track_key)}`} fontWeight="700" color=${ui.textPrimary} noOfLines=${1}>${row.title}<//>
                           <${Chakra.Text} fontSize="sm" color=${ui.textMuted} noOfLines=${1}>${row.artist}<//>
                         <//>
+                        <${CopyTrackButton} artist=${row.artist} title=${row.title} />
+<${OwnPlayBadge} artist=${row.artist} title=${row.title} trackKey=${row.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${row.artist} title=${row.title} trackKey=${row.track_key} artworkUrl=${row.artwork_url} />
                       <//>
                     <//>
                     <${Chakra.Td}>${formatNumber(row.total_plays)}<//>

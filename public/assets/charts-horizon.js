@@ -14,6 +14,9 @@ import {
   StatTile,
   AppIcons,
   CoverPlay,
+  CopyTrackButton,
+  FavoriteButton,
+  OwnPlayBadge,
   LoadingSpinner,
   LoadingOverlay,
   navigate,
@@ -163,10 +166,10 @@ function ChartsApp() {
                         >
                           <${Chakra.Td} py="2.5" fontSize="lg" fontWeight="800" textAlign="right">${entry.position}<//>
                           <${Chakra.Td} py="2.5"><${Movement} entry=${entry} /><//>
-                          <${Chakra.Td} py="2.5" maxW="440px">
-                            <${Chakra.HStack} spacing="3">
-                              ${linkKey(entry)
-                                ? html`<${CoverPlay} track=${{ trackKey: linkKey(entry), artist: entry.artist, title: entry.title, artworkUrl: entry.image_url || entry.artwork_url || entry.top_track_artwork }} size="40px" />`
+                          <${Chakra.Td} py="2.5" w="45%">
+                            <${Chakra.HStack} spacing="3" w="100%">
+                              ${linkKey(entry) || !isAlbums
+                                ? html`<${CoverPlay} track=${{ trackKey: linkKey(entry) || undefined, artist: entry.artist, title: entry.title, artworkUrl: entry.image_url || entry.artwork_url || entry.top_track_artwork }} size="40px" />`
                                 : entry.image_url
                                   ? html`<${Chakra.Image} src=${entry.image_url} boxSize="40px" minW="40px" borderRadius="10px" objectFit="cover" loading="lazy" />`
                                   : html`<${Chakra.Box} boxSize="40px" minW="40px" borderRadius="10px" bg="subtleBg" />`}
@@ -174,6 +177,10 @@ function ChartsApp() {
                                 <${Chakra.Text} fontWeight="700" fontSize="sm" noOfLines=${1}>${entry.title}<//>
                                 <${Chakra.Text} fontSize="sm" color="textMuted" noOfLines=${1}>${entry.artist}<//>
                               <//>
+                              <${CopyTrackButton} artist=${entry.artist} title=${entry.title} />
+<${OwnPlayBadge} artist=${entry.artist} title=${entry.title} trackKey=${entry.track_key} />
+<${Chakra.Spacer} />
+<${FavoriteButton} artist=${entry.artist} title=${entry.title} trackKey=${entry.track_key} artworkUrl=${entry.image_url} />
                             <//>
                           <//>
                           ${isAlbums ? null : html`<${Chakra.Td} py="2.5" fontSize="xs" color="textMuted" maxW="200px"><${Chakra.Text} noOfLines=${1}>${entry.label || '–'}<//><//>`}
